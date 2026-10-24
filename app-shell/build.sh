@@ -1,27 +1,28 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 # 小蚕哨兵 APK 构建脚本: aapt2 + javac + d8 + apksigner (无需 Gradle/AGP)
 # H5 界面由 xc-uniapp (uni-app vite) 提供: 先在 xc-uniapp 里 `npm run build:h5`
 # 注意: 必须绕过沙箱运行 (沙箱文件视图会造成 javac/aapt2 读写错层)
 set -e
 cd "$(dirname "$0")"
 
-export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
+export ANDROID_HOME="${ANDROID_HOME:-/opt/homebrew/share/android-commandlinetools}"
 BT=$ANDROID_HOME/build-tools/34.0.0
 PLATFORM=$ANDROID_HOME/platforms/android-34/android.jar
 OUT=build
-H5_SRC=../xc-uniapp/dist/build/h5
+H5_PROJECT="${H5_PROJECT:-../xc-uniapp}"
+H5_SRC="$H5_PROJECT/dist/build/h5"
 mkdir -p $OUT/classes $OUT/deps $OUT/assets
 
 echo "== [0/6] uni-app H5 产物检查 =="
 if [ ! -f "$H5_SRC/index.html" ]; then
   echo "未找到 H5 产物, 尝试现场构建..."
-  (cd ../xc-uniapp && env -u NODE_OPTIONS npm run build:h5 > /tmp/uniapp_build.log 2>&1)
+  (cd "$H5_PROJECT" && env -u NODE_OPTIONS npm run build:h5 > /tmp/uniapp_build.log 2>&1)
 fi
-if [ ! -f "$H5_SRC/index.html" ]; then echo "❌ H5 产物缺失且构建失败, 看 /tmp/uniapp_build.log"; exit 1; fi
+if [ ! -f "$H5_SRC/index.html" ]; then echo "H5 产物缺失且构建失败, 看 /tmp/uniapp_build.log"; exit 1; fi
 rm -rf "$OUT/assets/h5"
 mkdir -p "$OUT/assets/h5"
-ditto "$H5_SRC" "$OUT/assets/h5"
-if [ ! -f "$OUT/assets/h5/index.html" ]; then echo "❌ H5 index.html 拷贝失败"; exit 1; fi
+cp -R "$H5_SRC/." "$OUT/assets/h5/"
+if [ ! -f "$OUT/assets/h5/index.html" ]; then echo "H5 index.html 拷贝失败"; exit 1; fi
 echo "H5 资源已复制 ($(du -sh $OUT/assets/h5 | cut -f1), $(find $OUT/assets/h5 -name 'index.html' | wc -l | tr -d ' ') 个 index.html)"
 
 echo "== [1/6] 检查依赖 jar =="
