@@ -42,7 +42,7 @@ echo "== [2/6] aapt2 编译资源 =="
 $BT/aapt2 compile --dir res -o $OUT/res.zip
 
 echo "== [3/6] aapt2 链接 (含 H5 assets) =="
-$BT/aapt2 link -o $OUT/base.apk -I "$PLATFORM" --manifest AndroidManifest.xml -R $OUT/res.zip -A $OUT/assets --java $OUT/gen --auto-add-overlay
+$BT/aapt2 link -o $OUT/base.apk -I "$PLATFORM" --manifest AndroidManifest.xml -R $OUT/res.zip -A $OUT/assets --java $OUT/gen --auto-add-overlay --min-sdk-version 26 --target-sdk-version 34 --min-sdk-version 26 --target-sdk-version 34
 
 echo "== [4/6] javac 编译 =="
 javac --release 17 -encoding UTF-8 -nowarn -cp "$PLATFORM:$CP" -d $OUT/classes \
