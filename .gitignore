@@ -1,0 +1,10 @@
+node_modules/
+dist/
+build/
+*.apk
+*.keystore
+*.har
+.DS_Store
+.hbuilderx/
+xc_analysis/
+capture-kit/

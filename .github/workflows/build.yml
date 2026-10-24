@@ -1,0 +1,46 @@
+name: build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: build h5
+        run: |
+          cd web
+          npm install
+          npm run build:h5
+
+      - name: build apk
+        run: |
+          cd app-shell
+          chmod +x build.sh
+          ./build.sh
+
+      - name: upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xc-sentinel-apk
+          path: app-shell/build/xc-sentinel.apk
+
+      - name: attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app-shell/build/xc-sentinel.apk
