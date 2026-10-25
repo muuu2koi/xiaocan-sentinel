@@ -37,13 +37,27 @@ import java.util.concurrent.Executors;
 public class HomeActivity extends Activity {
 
     ListView lv;
-    TextView tvLoc, tvStatus, tvEmpty;
+    TextView tvLoc, tvStatus, tvEmpty, tvSort;
     EditText etSearch;
     CardAdapter adapter;
+    List<CardAdapter.Card> lastCards = new ArrayList<>();
+    String[] sortNames = {"按距离", "按返利", "按名额"};
     SharedPreferences p;
     final Handler main = new Handler(Looper.getMainLooper());
     final ExecutorService pool = Executors.newSingleThreadExecutor();
     volatile boolean fetching = false;
+    int sortMode() { try { return Integer.parseInt(p.getString("sort_mode", "0")); } catch (Exception e) { return 0; } }
+
+    void applySort() {
+        int m = sortMode();
+        lastCards.sort((a, b) -> {
+            if (m == 1) return Integer.compare(b.rebateVal, a.rebateVal);
+            if (m == 2) return Integer.compare(b.quota, a.quota);
+            return Float.compare(parseFloat(a.distText), parseFloat(b.distText));
+        });
+        adapter.setData(lastCards);
+    }
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -61,6 +75,15 @@ public class HomeActivity extends Activity {
         tvStatus = findViewById(R.id.tvStatus);
         tvEmpty = findViewById(R.id.tvEmpty);
         etSearch = findViewById(R.id.etSearch);
+        tvSort = findViewById(R.id.tvSort);
+        tvSort.setText(sortNames[sortMode()] + " ▾");
+        tvSort.setOnClickListener(v -> {
+            int m = (sortMode() + 1) % 3;
+            p.edit().putString("sort_mode", String.valueOf(m)).apply();
+            tvSort.setText(sortNames[m] + " ▾");
+            applySort();
+            Toast.makeText(this, "已按" + sortNames[m], Toast.LENGTH_SHORT).show();
+        });
         adapter = new CardAdapter(this);
         lv.setAdapter(adapter);
         lv.setEmptyView(tvEmpty);
@@ -68,6 +91,10 @@ public class HomeActivity extends Activity {
         findViewById(R.id.btnRefresh).setOnClickListener(v -> locateAndFetch());
         findViewById(R.id.btnSettings).setOnClickListener(v ->
                 startActivity(new Intent(this, SettingsActivity.class)));
+
+        if (!p.getBoolean("onboarded", false)) {
+            startActivity(new Intent(this, OnboardingActivity.class));
+        }
         findViewById(R.id.btnClear).setOnClickListener(v -> {
             etSearch.setText("");
             adapter.setQuery("");
@@ -105,6 +132,7 @@ public class HomeActivity extends Activity {
         tvStatus.setText(running ? "监听中" : "已停止");
         tvStatus.setBackgroundResource(running ? R.drawable.bg_chip_green : R.drawable.bg_search);
         tvStatus.setTextColor(running ? 0xFF2BB673 : 0xFF9A9A9A);
+        tvSort.setText(sortNames[sortMode()] + " ▾");
         if (!fetching && adapter.getCount() == 0) locateAndFetch();
     }
 
@@ -146,9 +174,10 @@ public class HomeActivity extends Activity {
                 JSONArray items = api.fetchFeedAll(lat, lng, 4);
                 List<CardAdapter.Card> cards = buildCards(items);
                 Set<Long> fresh = loadFreshIds();
+                lastCards = cards;
                 main.post(() -> {
                     fetching = false;
-                    adapter.setData(cards);
+                    applySort();
                     lv.setVisibility(View.VISIBLE);
                     tvEmpty.setVisibility(View.GONE);
                 });
@@ -199,6 +228,7 @@ public class HomeActivity extends Activity {
             int rb = best.optInt("user_rebate", 0);
             // 官方语义 (HAR 真值反推): rebate_condition==99 -> 无需评价; order_money==0 -> 无实付要求
             c.noReview = best.optInt("rebate_condition", 0) == 99;
+            c.rebateVal = best.optInt("user_rebate", 0);
             String ry = rb % 100 == 0 ? String.valueOf(rb / 100) : String.format("%.1f", rb / 100.0);
             // 官方规则: 有实付门槛 -> 满X返Y; 无实付要求 -> 最高返Y (返利浮动)
             c.rebateText = om > 0

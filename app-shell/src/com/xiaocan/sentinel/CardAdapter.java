@@ -27,7 +27,7 @@ public class CardAdapter extends BaseAdapter {
         int acts;
         String rebateText, timeText, extraText;
         boolean noReview;
-        int quota, quotaPct;
+        int quota, quotaPct, rebateVal;
     }
 
     final Context ctx;
