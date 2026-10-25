@@ -32,6 +32,9 @@ public class SettingsActivity extends Activity {
     LinearLayout quietBox;
     boolean running;
     final List<String> keywords = new ArrayList<>();
+    EditText etMinRebate;
+    CheckBox cbMt, cbTb, cbJd;
+    TextView tvLog;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -62,6 +65,7 @@ public class SettingsActivity extends Activity {
         running = p.getBoolean(PollService.PREF_RUNNING, false);
         renderRun();
         refreshPerms();
+        if (tvLog != null) tvLog.setText(new PollService().readLogStatic(getFilesDir(), 20));
     }
 
     void buildUi() {
@@ -74,8 +78,10 @@ public class SettingsActivity extends Activity {
         root.addView(card(permCard()));
         root.addView(card(ruleCard()));
         root.addView(card(kwCard()));
+        root.addView(card(filterCard()));
         root.addView(card(freqCard()));
         root.addView(card(quietCard()));
+        root.addView(card(logCard()));
 
         TextView tips = new TextView(this);
         tips.setTextSize(12);
@@ -422,6 +428,102 @@ public class SettingsActivity extends Activity {
             if ((i + 1) % 3 == 0) { chipsBox.addView(row); row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL); }
         }
         if (row.getChildCount() > 0) chipsBox.addView(row);
+    }
+
+    // ---- 筛选卡 ----
+    View filterCard() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(secTitle("上新筛选 (只影响全部上新提醒)"));
+
+        TextView l1 = new TextView(this);
+        l1.setTextSize(13);
+        l1.setTextColor(0xFF666666);
+        l1.setText("最低返利 (元, 0 = 不限)");
+        l1.setPadding(0, (int) (4 * getResources().getDisplayMetrics().density), 0, 0);
+        box.addView(l1);
+        etMinRebate = new EditText(this);
+        etMinRebate.setTextSize(14);
+        etMinRebate.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        etMinRebate.setSingleLine();
+        etMinRebate.setBackgroundResource(R.drawable.bg_search);
+        etMinRebate.setPadding(16, 10, 16, 10);
+        try {
+            int fen = Integer.parseInt(p.getString("min_rebate_fen", "0"));
+            etMinRebate.setText(fen > 0 ? String.valueOf(fen / 100.0) : "0");
+        } catch (Exception e) { etMinRebate.setText("0"); }
+        etMinRebate.setOnFocusChangeListener((v, f) -> { if (!f) saveFilter(); });
+        box.addView(etMinRebate);
+
+        TextView l2 = new TextView(this);
+        l2.setTextSize(13);
+        l2.setTextColor(0xFF666666);
+        l2.setText("只监听这些平台 (全不选 = 不限)");
+        l2.setPadding(0, (int) (12 * getResources().getDisplayMetrics().density), 0, 0);
+        box.addView(l2);
+        java.util.Set<String> pf = platformSet();
+        cbMt = platCheck("美团", pf.contains("1"));
+        cbTb = platCheck("淘宝闪购", pf.contains("2") || pf.contains("4"));
+        cbJd = platCheck("京东", pf.contains("3"));
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.addView(wrapCheck(cbMt));
+        row.addView(wrapCheck(cbTb));
+        row.addView(wrapCheck(cbJd));
+        box.addView(row);
+        return box;
+    }
+
+    CheckBox platCheck(String label, boolean checked) {
+        CheckBox c = new CheckBox(this);
+        c.setText(label);
+        c.setTextSize(13);
+        c.setChecked(checked);
+        c.setOnCheckedChangeListener((b, w) -> saveFilter());
+        return c;
+    }
+
+    LinearLayout wrapCheck(CheckBox c) {
+        LinearLayout b = new LinearLayout(this);
+        b.setOrientation(LinearLayout.HORIZONTAL);
+        b.addView(c);
+        return b;
+    }
+
+    java.util.Set<String> platformSet() {
+        java.util.Set<String> s = new java.util.HashSet<>();
+        for (String k : p.getString("platforms", "").split(",")) {
+            k = k.trim();
+            if (!k.isEmpty()) s.add(k);
+        }
+        return s;
+    }
+
+    void saveFilter() {
+        double yuan = 0;
+        try { yuan = Double.parseDouble(etMinRebate.getText().toString()); } catch (Exception ignore) { }
+        int fen = (int) Math.round(yuan * 100);
+        java.util.Set<String> s = new java.util.HashSet<>();
+        if (cbMt.isChecked()) s.add("1");
+        if (cbTb.isChecked()) { s.add("2"); s.add("4"); }
+        if (cbJd.isChecked()) s.add("3");
+        p.edit().putString("min_rebate_fen", String.valueOf(fen))
+                .putString("platforms", String.join(",", s)).apply();
+        toast("筛选已保存");
+    }
+
+    // ---- 巡检动态卡 ----
+    View logCard() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(secTitle("巡检动态 (最近记录)"));
+        tvLog = new TextView(this);
+        tvLog.setTextSize(11);
+        tvLog.setTextColor(0xFF555555);
+        tvLog.setTypeface(android.graphics.Typeface.MONOSPACE);
+        tvLog.setLineSpacing(0, 1.2f);
+        box.addView(tvLog);
+        return box;
     }
 
     // ---- 频率卡 ----

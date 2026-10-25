@@ -20,7 +20,9 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Iterator;
 import java.util.Locale;
 import java.util.Map;
@@ -58,6 +60,7 @@ public class PollService extends Service {
         int orderMoney;  // 分
         int quota;
         long fs;         // first seen (秒)
+        long ls;         // last seen (秒): 活动短暂离开列表不立即删除, 防止重复推送
         boolean notifiedNew;
         boolean notifiedRestock;
     }
@@ -149,8 +152,12 @@ public class PollService extends Service {
             boolean chkAll = p.getBoolean("switch_all", true);
             boolean chkKeyword = p.getBoolean("switch_keyword", true);
             String[] keywords = getKeywords();
+            int minRebate = parseInt(p.getString("min_rebate_fen", "0"), 0);
+            java.util.Set<String> plats = getPlatforms();
+            long nowSec = System.currentTimeMillis() / 1000;
 
             HashMap<Long, Boolean> seen = new HashMap<>();
+            List<String[]> batchNew = new ArrayList<>(); // {store, chip, quota}
             int newCount = 0;
             for (int i = 0; i < list.length(); i++) {
                 JSONObject it = list.getJSONObject(i);
@@ -159,19 +166,33 @@ public class PollService extends Service {
                 seen.put(pid, true);
                 ItemState st = items.get(pid);
                 boolean isNew = (st == null);
-                if (isNew) { st = new ItemState(); st.fs = System.currentTimeMillis() / 1000; items.put(pid, st); newCount++; }
+                if (isNew) {
+                    st = new ItemState();
+                    st.fs = nowSec;
+                    st.ls = nowSec;
+                    items.put(pid, st);
+                    newCount++;
+                }
                 JSONObject store = it.optJSONObject("store") != null ? it.optJSONObject("store") : new JSONObject();
                 String storeName = store.optString("name", "");
                 int rebate = it.optInt("user_rebate", 0);
                 int orderMoney = it.optInt("order_money", 0);
                 int quota = it.optInt("left_number", 0);
+                int platform = store.optInt("store_platform", it.optInt("store_platform", 0));
+                st.ls = nowSec;
 
                 if (baseline && isNew) st.notifiedNew = true;
 
+                // 全部上新提醒: 尊重平台/最低返利筛选, 批量合并推送
                 if (!baseline && isNew && chkAll && !st.notifiedNew) {
-                    st.notifiedNew = true;
-                    notifyAlert("🆕 上新 · " + chipText(orderMoney, rebate), storeName, quota);
+                    boolean platOk = plats.isEmpty() || plats.contains(String.valueOf(platform));
+                    boolean rebateOk = minRebate <= 0 || rebate >= minRebate;
+                    if (platOk && rebateOk) {
+                        st.notifiedNew = true;
+                        batchNew.add(new String[]{storeName, chipText(orderMoney, rebate), String.valueOf(quota)});
+                    }
                 }
+                // 关键词提醒: 精准命中, 不受筛选限制
                 if (!baseline && chkKeyword && keywords.length > 0 && hitKeyword(storeName, keywords)) {
                     if (isNew && !st.notifiedNew) {
                         st.notifiedNew = true;
@@ -187,16 +208,100 @@ public class PollService extends Service {
                 st.quota = quota;
                 if (quota == 0) st.notifiedRestock = false;
             }
-            if (!seen.isEmpty()) {
-                Iterator<Long> it = items.keySet().iterator();
-                while (it.hasNext()) { Long k = it.next(); if (!seen.containsKey(k)) it.remove(); }
+
+            // 批量通知: 3 条以内逐条, 超过合并成一条汇总 (解决「一到刷新时间推一堆」)
+            if (!batchNew.isEmpty()) {
+                if (batchNew.size() <= 3) {
+                    for (String[] b : batchNew) {
+                        notifyAlert("🆕 上新 · " + b[1], b[0], Integer.parseInt(b[2]));
+                    }
+                } else {
+                    StringBuilder sb = new StringBuilder();
+                    for (int i = 0; i < batchNew.size() && i < 3; i++) {
+                        sb.append(batchNew.get(i)[0]).append(" ").append(batchNew.get(i)[1]).append("\n");
+                    }
+                    sb.append("… 共 ").append(batchNew.size()).append(" 个新活动");
+                    notifySystem("🆕 发现 " + batchNew.size() + " 个新活动", sb.toString().trim());
+                }
             }
+
+            // 保留期: 48 小时内出现过的活动不删除 (防止列表抖动导致重复推送), 过期才清理
+            Iterator<Long> it = items.keySet().iterator();
+            int pruned = 0;
+            while (it.hasNext()) {
+                Long k = it.next();
+                ItemState st = items.get(k);
+                if (!seen.containsKey(k) && nowSec - st.ls > 48 * 3600) { it.remove(); pruned++; }
+            }
+
             hadPriorState = true;
             saveState();
-            lastStatus = "正常 · 在售 " + list.length() + " · 新增 " + newCount;
+            lastStatus = "在售 " + list.length() + " · 新增 " + newCount + (pruned > 0 ? " · 清理 " + pruned : "");
+            appendLog("巡检 在售 " + list.length() + " · 新增 " + newCount + (baseline ? " (首巡基线, 不推送)" : ""));
         } catch (Exception e) {
             handleFailure("解析: " + e.getMessage());
         }
+    }
+
+    java.util.Set<String> getPlatforms() {
+        java.util.Set<String> s = new java.util.HashSet<>();
+        for (String k : getSharedPreferences(getPackageName(), MODE_PRIVATE).getString("platforms", "").split(",")) {
+            k = k.trim();
+            if (!k.isEmpty()) s.add(k);
+        }
+        return s;
+    }
+
+    // 巡检日志: 最近 100 条, 设置页可视化
+    File logFile() { return new File(getFilesDir(), "poll_log.txt"); }
+
+    void appendLog(String line) {
+        try {
+            java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("MM-dd HH:mm", Locale.ROOT);
+            String line2 = sdf.format(new Date()) + "  " + line + "\n";
+            java.io.FileOutputStream fo = new java.io.FileOutputStream(logFile(), true);
+            fo.write(line2.getBytes("UTF-8"));
+            fo.close();
+            // 裁剪到最近 100 行
+            java.io.FileInputStream fi = new java.io.FileInputStream(logFile());
+            byte[] all = new byte[(int) logFile().length()];
+            int n = fi.read(all);
+            fi.close();
+            String[] lines = new String(all, 0, Math.max(n, 0), "UTF-8").split("\n");
+            if (lines.length > 100) {
+                java.io.FileOutputStream fo2 = new java.io.FileOutputStream(logFile());
+                StringBuilder sb = new StringBuilder();
+                for (int i = lines.length - 100; i < lines.length; i++) sb.append(lines[i]).append('\n');
+                fo2.write(sb.toString().getBytes("UTF-8"));
+                fo2.close();
+            }
+        } catch (Exception ignore) { }
+    }
+
+    public static String readLogStatic(java.io.File filesDir, int maxLines) {
+        try {
+            java.io.FileInputStream fi = new java.io.FileInputStream(new java.io.File(filesDir, "poll_log.txt"));
+            byte[] all = new byte[(int) new java.io.File(filesDir, "poll_log.txt").length()];
+            int n = fi.read(all);
+            fi.close();
+            String[] lines = new String(all, 0, Math.max(n, 0), "UTF-8").split("\n");
+            StringBuilder sb = new StringBuilder();
+            for (int i = lines.length - 1; i >= 0 && i >= lines.length - maxLines; i--) sb.append(lines[i]).append('\n');
+            return sb.toString();
+        } catch (Exception e) { return "暂无巡检记录, 启动监控后这里会显示每次巡检结果"; }
+    }
+
+    String readLog(int maxLines) {
+        try {
+            java.io.FileInputStream fi = new java.io.FileInputStream(logFile());
+            byte[] all = new byte[(int) logFile().length()];
+            int n = fi.read(all);
+            fi.close();
+            String[] lines = new String(all, 0, Math.max(n, 0), "UTF-8").split("\n");
+            StringBuilder sb = new StringBuilder();
+            for (int i = lines.length - 1; i >= 0 && i >= lines.length - maxLines; i--) sb.append(lines[i]).append('\n');
+            return sb.toString();
+        } catch (Exception e) { return "暂无巡检记录"; }
     }
 
     static String chipText(int orderMoney, int rebate) {
@@ -211,6 +316,7 @@ public class PollService extends Service {
     void handleFailure(String why) {
         consecutiveFails++;
         lastStatus = "失败x" + consecutiveFails + " (" + why + ")";
+        appendLog("失败 " + why);
         if (consecutiveFails == 10) {
             notifySystem("⏸ 监控已自动暂停", "连续失败: " + why + "\n请打开小蚕哨兵检查网络后重新启动");
             stopPolling();
@@ -271,6 +377,8 @@ public class PollService extends Service {
                 st.orderMoney = v.optInt("om", 0);
                 st.quota = v.optInt("quota", 0);
                 st.fs = v.optLong("fs", 0);
+                st.ls = v.optLong("ls", v.optLong("fs", 0));
+                if (st.ls == 0) st.ls = System.currentTimeMillis() / 1000;
                 st.notifiedNew = v.optBoolean("nn", false);
                 st.notifiedRestock = v.optBoolean("nr", false);
                 items.put(Long.parseLong(k), st);
@@ -292,6 +400,7 @@ public class PollService extends Service {
                 v.put("om", st.orderMoney);
                 v.put("quota", st.quota);
                 v.put("fs", st.fs);
+                v.put("ls", st.ls);
                 v.put("nn", st.notifiedNew);
                 v.put("nr", st.notifiedRestock);
                 o.put(String.valueOf(e.getKey()), v);
