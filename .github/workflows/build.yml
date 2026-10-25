@@ -34,3 +34,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: app-shell/build/xc-sentinel.apk
+          overwrite_files: true
