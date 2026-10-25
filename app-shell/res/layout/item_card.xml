@@ -5,12 +5,11 @@
     android:layout_marginBottom="10dp"
     android:background="@drawable/bg_card"
     android:orientation="horizontal"
-    android:padding="12dp">
+    android:padding="14dp">
 
-    <!-- 店招图 + NEW角标 -->
     <FrameLayout
-        android:layout_width="78dp"
-        android:layout_height="78dp">
+        android:layout_width="76dp"
+        android:layout_height="76dp">
 
         <ImageView
             android:id="@+id/ivIcon"
@@ -36,11 +35,10 @@
             android:visibility="gone" />
     </FrameLayout>
 
-    <!-- 中间信息区 -->
     <LinearLayout
         android:layout_width="0dp"
-        android:layout_height="match_parent"
-        android:layout_marginLeft="10dp"
+        android:layout_height="wrap_content"
+        android:layout_marginLeft="11dp"
         android:layout_weight="1"
         android:orientation="vertical">
 
@@ -57,7 +55,6 @@
                 android:layout_weight="1"
                 android:ellipsize="end"
                 android:maxLines="1"
-                android:text="店铺名"
                 android:textColor="#1A1A1A"
                 android:textSize="15sp"
                 android:textStyle="bold" />
@@ -67,7 +64,6 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginLeft="6dp"
-                android:text="0.0km"
                 android:textColor="#9A9A9A"
                 android:textSize="11sp" />
         </LinearLayout>
@@ -75,7 +71,7 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
+            android:layout_marginTop="5dp"
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
@@ -84,12 +80,70 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:background="@drawable/bg_chip_orange"
-                android:paddingLeft="5dp"
-                android:paddingRight="5dp"
+                android:paddingLeft="6dp"
+                android:paddingRight="6dp"
                 android:paddingTop="1dp"
                 android:paddingBottom="1dp"
-                android:text="美团"
                 android:textColor="#FF9500"
+                android:textSize="10sp" />
+
+            <TextView
+                android:id="@+id/tvCount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginLeft="8dp"
+                android:textColor="#9A9A9A"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/tvCardNew"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginLeft="8dp"
+                android:background="@drawable/bg_badge_new"
+                android:paddingLeft="6dp"
+                android:paddingRight="6dp"
+                android:paddingTop="1dp"
+                android:paddingBottom="1dp"
+                android:text="NEW"
+                android:textColor="#FFFFFF"
+                android:textSize="9sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="7dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/tvRebate"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_chip_rebate"
+                android:paddingLeft="8dp"
+                android:paddingRight="8dp"
+                android:paddingTop="2dp"
+                android:paddingBottom="2dp"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvNoReview"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginLeft="6dp"
+                android:background="@drawable/bg_chip_green"
+                android:paddingLeft="6dp"
+                android:paddingRight="6dp"
+                android:paddingTop="2dp"
+                android:paddingBottom="2dp"
+                android:text="无需评价"
+                android:textColor="#2BB673"
                 android:textSize="10sp" />
 
             <TextView
@@ -99,7 +153,6 @@
                 android:layout_marginLeft="6dp"
                 android:ellipsize="end"
                 android:maxLines="1"
-                android:text="00:30-23:59 可抢"
                 android:textColor="#AAAAAA"
                 android:textSize="10sp" />
         </LinearLayout>
@@ -107,58 +160,7 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="5dp"
-            android:orientation="horizontal">
-
-            <TextView
-                android:id="@+id/tvRebate"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:background="@drawable/bg_chip_rebate"
-                android:paddingLeft="6dp"
-                android:paddingRight="6dp"
-                android:paddingTop="2dp"
-                android:paddingBottom="2dp"
-                android:text="满45返28"
-                android:textColor="#FFFFFF"
-                android:textSize="11sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/tvNoReview"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginLeft="5dp"
-                android:background="@drawable/bg_chip_green"
-                android:paddingLeft="5dp"
-                android:paddingRight="5dp"
-                android:paddingTop="2dp"
-                android:paddingBottom="2dp"
-                android:text="无需评价"
-                android:textColor="#2BB673"
-                android:textSize="10sp" />
-
-            <TextView
-                android:id="@+id/tvBrand"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginLeft="5dp"
-                android:background="@drawable/bg_chip_orange"
-                android:paddingLeft="5dp"
-                android:paddingRight="5dp"
-                android:paddingTop="2dp"
-                android:paddingBottom="2dp"
-                android:text="大牌"
-                android:textColor="#FF6D00"
-                android:textSize="10sp"
-                android:textStyle="bold" />
-        </LinearLayout>
-
-        <!-- 名额进度 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="7dp"
+            android:layout_marginTop="8dp"
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
@@ -175,14 +177,11 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginLeft="8dp"
-                android:text="还剩20份"
-                android:textColor="#FF6D00"
                 android:textSize="11sp"
                 android:textStyle="bold" />
         </LinearLayout>
     </LinearLayout>
 
-    <!-- 右侧按钮 -->
     <TextView
         android:id="@+id/btnGo"
         android:layout_width="wrap_content"
@@ -192,8 +191,8 @@
         android:background="@drawable/bg_btn_rebate"
         android:paddingLeft="13dp"
         android:paddingRight="13dp"
-        android:paddingTop="9dp"
-        android:paddingBottom="9dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
         android:text="报名返利"
         android:textColor="#FFFFFF"
         android:textSize="12sp"
