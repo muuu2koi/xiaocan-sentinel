@@ -67,7 +67,7 @@ public class CardAdapter extends BaseAdapter {
 
     static class VH {
         ImageView ivIcon;
-        TextView tvNew, tvName, tvDist, tvPlatform, tvCount, tvCardNew, tvRebate, tvNoReview, tvExtra, tvTime, tvQuota;
+        TextView tvNew, tvName, tvDist, tvPlatform, tvCount, tvRebate, tvNoReview, tvExtra, tvTime, tvQuota;
         ProgressBar pbQuota;
     }
 
@@ -84,7 +84,6 @@ public class CardAdapter extends BaseAdapter {
             h.tvDist = v.findViewById(R.id.tvDist);
             h.tvPlatform = v.findViewById(R.id.tvPlatform);
             h.tvCount = v.findViewById(R.id.tvCount);
-            h.tvCardNew = v.findViewById(R.id.tvCardNew);
             h.tvRebate = v.findViewById(R.id.tvRebate);
             h.tvNoReview = v.findViewById(R.id.tvNoReview);
             h.tvExtra = v.findViewById(R.id.tvExtra);
@@ -109,9 +108,7 @@ public class CardAdapter extends BaseAdapter {
         if (tb) h.tvPlatform.setTextColor(0xFFFFFFFF);
         h.tvCount.setText(card.acts + " 个活动");
 
-        boolean anyNew = card.isNew;
-        h.tvNew.setVisibility(anyNew ? View.VISIBLE : View.GONE);
-        h.tvCardNew.setVisibility(anyNew ? View.VISIBLE : View.GONE);
+        h.tvNew.setVisibility(card.isNew ? View.VISIBLE : View.GONE);
 
         h.tvRebate.setText(card.rebateText);
         h.tvNoReview.setVisibility(card.noReview ? View.VISIBLE : View.GONE);
