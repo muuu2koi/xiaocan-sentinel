@@ -12,26 +12,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
       - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: build h5
-        run: |
-          cd web
-          npm install
-          npm run build:h5
-
       - name: build apk
         run: |
           cd app-shell
           chmod +x build.sh
-          H5_PROJECT=../web ./build.sh
+          ./build.sh
 
       - name: upload artifact
         uses: actions/upload-artifact@v4

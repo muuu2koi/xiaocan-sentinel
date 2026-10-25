@@ -13,17 +13,16 @@ H5_PROJECT="${H5_PROJECT:-../xc-uniapp}"
 H5_SRC="$H5_PROJECT/dist/build/h5"
 mkdir -p $OUT/classes $OUT/deps $OUT/assets
 
-echo "== [0/6] uni-app H5 产物检查 =="
-if [ ! -f "$H5_SRC/index.html" ]; then
-  echo "未找到 H5 产物, 尝试现场构建..."
-  (cd "$H5_PROJECT" && env -u NODE_OPTIONS npm run build:h5 > /tmp/uniapp_build.log 2>&1)
+AFLAG=""
+if [ -f "$H5_SRC/index.html" ]; then
+  echo "== [0/6] 打包旧版 H5 资源 (可选) =="
+  rm -rf "$OUT/assets/h5"
+  mkdir -p "$OUT/assets/h5"
+  cp -R "$H5_SRC/." "$OUT/assets/h5/"
+  AFLAG="-A $OUT/assets"
+else
+  echo "== [0/6] 无 H5 资源, 跳过 (纯原生模式) =="
 fi
-if [ ! -f "$H5_SRC/index.html" ]; then echo "H5 产物缺失且构建失败, 看 /tmp/uniapp_build.log"; exit 1; fi
-rm -rf "$OUT/assets/h5"
-mkdir -p "$OUT/assets/h5"
-cp -R "$H5_SRC/." "$OUT/assets/h5/"
-if [ ! -f "$OUT/assets/h5/index.html" ]; then echo "H5 index.html 拷贝失败"; exit 1; fi
-echo "H5 资源已复制 ($(du -sh $OUT/assets/h5 | cut -f1), $(find $OUT/assets/h5 -name 'index.html' | wc -l | tr -d ' ') 个 index.html)"
 
 echo "== [1/6] 检查依赖 jar =="
 DEP() {
@@ -42,7 +41,7 @@ echo "== [2/6] aapt2 编译资源 =="
 $BT/aapt2 compile --dir res -o $OUT/res.zip
 
 echo "== [3/6] aapt2 链接 (含 H5 assets) =="
-$BT/aapt2 link -o $OUT/base.apk -I "$PLATFORM" --manifest AndroidManifest.xml -R $OUT/res.zip -A $OUT/assets --java $OUT/gen --auto-add-overlay --min-sdk-version 26 --target-sdk-version 34 --min-sdk-version 26 --target-sdk-version 34
+$BT/aapt2 link -o $OUT/base.apk -I "$PLATFORM" --manifest AndroidManifest.xml -R $OUT/res.zip $AFLAG --java $OUT/gen --auto-add-overlay --min-sdk-version 26 --target-sdk-version 34 --min-sdk-version 26 --target-sdk-version 34
 
 echo "== [4/6] javac 编译 =="
 javac --release 17 -encoding UTF-8 -nowarn -cp "$PLATFORM:$CP" -d $OUT/classes \
