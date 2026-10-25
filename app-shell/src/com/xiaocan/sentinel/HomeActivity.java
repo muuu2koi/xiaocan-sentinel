@@ -41,7 +41,7 @@ public class HomeActivity extends Activity {
     EditText etSearch;
     CardAdapter adapter;
     List<CardAdapter.Card> lastCards = new ArrayList<>();
-    String[] sortNames = {"按距离", "按返利", "按名额"};
+    String[] sortNames = {"默认顺序", "按距离", "按返利", "按名额"};
     SharedPreferences p;
     final Handler main = new Handler(Looper.getMainLooper());
     final ExecutorService pool = Executors.newSingleThreadExecutor();
@@ -50,11 +50,14 @@ public class HomeActivity extends Activity {
 
     void applySort() {
         int m = sortMode();
-        lastCards.sort((a, b) -> {
-            if (m == 1) return Integer.compare(b.rebateVal, a.rebateVal);
-            if (m == 2) return Integer.compare(b.quota, a.quota);
-            return Float.compare(parseFloat(a.distText), parseFloat(b.distText));
-        });
+        if (m == 1) {
+            lastCards.sort((a, b) -> Float.compare(parseFloat(a.distText), parseFloat(b.distText)));
+        } else if (m == 2) {
+            lastCards.sort((a, b) -> Integer.compare(b.rebateVal, a.rebateVal));
+        } else if (m == 3) {
+            lastCards.sort((a, b) -> Integer.compare(b.quota, a.quota));
+        }
+        // m == 0: 后端原始顺序, 不排序
         adapter.setData(lastCards);
     }
 
@@ -63,12 +66,7 @@ public class HomeActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         p = getSharedPreferences(getPackageName(), MODE_PRIVATE);
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 2);
-        }
-        if (Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, 1);
-        }
+        // 权限申请统一由首启引导页 / 设置页权限检查负责, 主页不再弹窗
         setContentView(R.layout.activity_home);
         lv = findViewById(R.id.listView);
         tvLoc = findViewById(R.id.tvLoc);
@@ -78,7 +76,7 @@ public class HomeActivity extends Activity {
         tvSort = findViewById(R.id.tvSort);
         tvSort.setText(sortNames[sortMode()] + " ▾");
         tvSort.setOnClickListener(v -> {
-            int m = (sortMode() + 1) % 3;
+            int m = (sortMode() + 1) % 4;
             p.edit().putString("sort_mode", String.valueOf(m)).apply();
             tvSort.setText(sortNames[m] + " ▾");
             applySort();
@@ -148,7 +146,11 @@ public class HomeActivity extends Activity {
     void locateAndFetch() {
         boolean granted = Build.VERSION.SDK_INT < 23 ||
                 checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
-        if (!granted) { fetchWith(prefsLat(), prefsLng()); return; }
+        if (!granted) {
+            tvLoc.setText("📍 无定位权限 (设置页可授权), 使用默认位置");
+            fetchWith(prefsLat(), prefsLng());
+            return;
+        }
         tvLoc.setText("📍 定位中…");
         LocHelper.fix(this, (lat, lng, src) -> {
             if (lat != 0 && lng != 0) {
