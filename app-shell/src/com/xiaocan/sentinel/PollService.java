@@ -117,8 +117,8 @@ public class PollService extends Service {
     void doPoll() {
         if (!running) return;
         SharedPreferences p = getSharedPreferences(getPackageName(), MODE_PRIVATE);
-        double lat = parseD(p.getString("lat", "23.020500"), 23.020500);
-        double lng = parseD(p.getString("lng", "113.751800"), 113.751800);
+        double lat = parseD(p.getString("lat", "23.065594"), 23.065594);
+        double lng = parseD(p.getString("lng", "113.977765"), 113.977765);
         try {
             JSONArray list = api.fetchFeedAll(lat, lng, 4);
             handleSuccess(list);
@@ -200,7 +200,8 @@ public class PollService extends Service {
     }
 
     static String chipText(int orderMoney, int rebate) {
-        return "满" + (orderMoney / 100) + "返" + fmtYuan(rebate);
+        String ry = fmtYuan(rebate);
+        return orderMoney > 0 ? "满" + fmtYuan(orderMoney) + "返" + ry : "返" + ry;
     }
 
     static String fmtYuan(int fen) {

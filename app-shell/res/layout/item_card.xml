@@ -53,8 +53,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:ellipsize="end"
-                android:maxLines="1"
+                android:maxLines="2"
                 android:textColor="#1A1A1A"
                 android:textSize="15sp"
                 android:textStyle="bold" />
@@ -94,6 +93,16 @@
                 android:layout_marginLeft="8dp"
                 android:textColor="#9A9A9A"
                 android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/tvTime"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginLeft="8dp"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="#AAAAAA"
+                android:textSize="10sp" />
 
             <TextView
                 android:id="@+id/tvCardNew"
@@ -147,14 +156,18 @@
                 android:textSize="10sp" />
 
             <TextView
-                android:id="@+id/tvTime"
+                android:id="@+id/tvExtra"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginLeft="6dp"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:textColor="#AAAAAA"
-                android:textSize="10sp" />
+                android:background="@drawable/bg_chip_orange"
+                android:paddingLeft="6dp"
+                android:paddingRight="6dp"
+                android:paddingTop="2dp"
+                android:paddingBottom="2dp"
+                android:textColor="#FF6D00"
+                android:textSize="10sp"
+                android:visibility="gone" />
         </LinearLayout>
 
         <LinearLayout
