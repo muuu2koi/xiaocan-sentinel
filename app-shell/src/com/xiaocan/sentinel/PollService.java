@@ -51,6 +51,7 @@ public class PollService extends Service {
 
     // 活动状态表 (持久化 files/state.json, H5 首页也读它标 NEW)
     final HashMap<Long, ItemState> items = new HashMap<>();
+    final java.util.LinkedHashSet<Long> archive = new java.util.LinkedHashSet<>(); // 已见归档: 防止清理后再出现被重复推上新
     boolean stateLoaded = false;
     boolean hadPriorState = false;
 
@@ -95,6 +96,7 @@ public class PollService extends Service {
         getSharedPreferences(getPackageName(), MODE_PRIVATE).edit().putBoolean(PREF_RUNNING, true).apply();
         createChannels();
         loadState();
+        loadArchive();
         api = buildApi();
         startForeground(1, buildServiceNotification("初始化..."));
         handler.post(tick);
@@ -165,13 +167,16 @@ public class PollService extends Service {
                 if (pid == 0) continue;
                 seen.put(pid, true);
                 ItemState st = items.get(pid);
+                boolean archived = archive.contains(pid);   // 曾出现过且已过保留期
                 boolean isNew = (st == null);
                 if (isNew) {
                     st = new ItemState();
                     st.fs = nowSec;
                     st.ls = nowSec;
                     items.put(pid, st);
-                    newCount++;
+                    if (!archived) newCount++;
+                    // 归档回归的活动不推「上新」, 但补货监控照常生效
+                    if (archived || baseline) st.notifiedNew = true;
                 }
                 JSONObject store = it.optJSONObject("store") != null ? it.optJSONObject("store") : new JSONObject();
                 String storeName = store.optString("name", "");
@@ -183,7 +188,7 @@ public class PollService extends Service {
 
                 if (baseline && isNew) st.notifiedNew = true;
 
-                // 全部上新提醒: 尊重平台/最低返利筛选, 批量合并推送
+                // 全部上新提醒: 尊重平台/最低返利筛选, 批量合并推送; 名额为 0 的新活动也如实计入
                 if (!baseline && isNew && chkAll && !st.notifiedNew) {
                     boolean platOk = plats.isEmpty() || plats.contains(String.valueOf(platform));
                     boolean rebateOk = minRebate <= 0 || rebate >= minRebate;
@@ -193,11 +198,16 @@ public class PollService extends Service {
                     }
                 }
                 // 关键词提醒: 精准命中, 不受筛选限制
+                // 上新: 名额为 0 时只标记不推 (没有意义), 等补货 (0 -> 有) 时推「补货」
                 if (!baseline && chkKeyword && keywords.length > 0 && hitKeyword(storeName, keywords)) {
-                    if (isNew && !st.notifiedNew) {
-                        st.notifiedNew = true;
-                        notifyAlert("🎯 关键词上新 · " + chipText(orderMoney, rebate), storeName, quota);
-                    } else if (!isNew && st.quota == 0 && quota > 0 && !st.notifiedRestock) {
+                    if (isNew) {
+                        if (!st.notifiedNew && quota > 0) {
+                            st.notifiedNew = true;
+                            notifyAlert("🎯 关键词上新 · " + chipText(orderMoney, rebate), storeName, quota);
+                        } else if (!st.notifiedNew) {
+                            st.notifiedNew = true;  // 秒没的新活动: 静默标记, 静候补货
+                        }
+                    } else if (st.quota == 0 && quota > 0 && !st.notifiedRestock) {
                         st.notifiedRestock = true;
                         notifyAlert("🎯 关键词补货 · " + chipText(orderMoney, rebate), storeName, quota);
                     }
@@ -231,8 +241,17 @@ public class PollService extends Service {
             while (it.hasNext()) {
                 Long k = it.next();
                 ItemState st = items.get(k);
-                if (!seen.containsKey(k) && nowSec - st.ls > 48 * 3600) { it.remove(); pruned++; }
+                if (!seen.containsKey(k) && nowSec - st.ls > 48 * 3600) {
+                    it.remove();
+                    pruned++;
+                    archive.add(k);   // 进入已见归档, 再出现不重复推上新
+                }
             }
+            while (archive.size() > 8000) {
+                Iterator<Long> ai = archive.iterator();
+                if (ai.hasNext()) { ai.next(); ai.remove(); } else break;
+            }
+            saveArchive();
 
             hadPriorState = true;
             saveState();
@@ -254,6 +273,29 @@ public class PollService extends Service {
 
     // 巡检日志: 最近 100 条, 设置页可视化
     File logFile() { return new File(getFilesDir(), "poll_log.txt"); }
+
+    File archiveFile() { return new File(getFilesDir(), "archive.json"); }
+
+    void loadArchive() {
+        try {
+            java.io.FileInputStream fi = new java.io.FileInputStream(archiveFile());
+            byte[] all = new byte[(int) archiveFile().length()];
+            int n = fi.read(all);
+            fi.close();
+            org.json.JSONArray a = new org.json.JSONArray(new String(all, 0, Math.max(n, 0), "UTF-8"));
+            for (int i = 0; i < a.length(); i++) archive.add(a.optLong(i));
+        } catch (Exception ignore) { }
+    }
+
+    void saveArchive() {
+        try {
+            org.json.JSONArray a = new org.json.JSONArray();
+            for (Long id : archive) a.put(id);
+            java.io.FileOutputStream fo = new java.io.FileOutputStream(archiveFile());
+            fo.write(a.toString().getBytes("UTF-8"));
+            fo.close();
+        } catch (Exception ignore) { }
+    }
 
     void appendLog(String line) {
         try {
