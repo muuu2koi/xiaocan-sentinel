@@ -67,7 +67,7 @@ public class CardAdapter extends BaseAdapter {
 
     static class VH {
         ImageView ivIcon;
-        TextView tvNew, tvName, tvDist, tvPlatform, tvCount, tvCardNew, tvRebate, tvNoReview, tvExtra, tvTime, tvQuota, btnGo;
+        TextView tvNew, tvName, tvDist, tvPlatform, tvCount, tvCardNew, tvRebate, tvNoReview, tvExtra, tvTime, tvQuota;
         ProgressBar pbQuota;
     }
 
@@ -91,7 +91,6 @@ public class CardAdapter extends BaseAdapter {
             h.tvTime = v.findViewById(R.id.tvTime);
             h.pbQuota = v.findViewById(R.id.pbQuota);
             h.tvQuota = v.findViewById(R.id.tvQuota);
-            h.btnGo = v.findViewById(R.id.btnGo);
             v.setTag(h);
         } else {
             h = (VH) v.getTag();
@@ -128,7 +127,6 @@ public class CardAdapter extends BaseAdapter {
         h.tvQuota.setText(card.quota > 0 ? "还剩 " + card.quota + " 份" : "已抢光");
         h.tvQuota.setTextColor(card.quota > 0 ? (card.quota <= 3 ? 0xFFFF3B30 : 0xFFFF6D00) : 0xFFBBBBBB);
 
-        h.btnGo.setOnClickListener(v1 -> openXiaocan());
         v.setOnClickListener(v1 -> openXiaocan());
         return v;
     }

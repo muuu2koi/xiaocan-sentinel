@@ -199,11 +199,11 @@ public class HomeActivity extends Activity {
             int rb = best.optInt("user_rebate", 0);
             // 官方语义 (HAR 真值反推): rebate_condition==99 -> 无需评价; order_money==0 -> 无实付要求
             c.noReview = best.optInt("rebate_condition", 0) == 99;
-            String pre = acts.size() > 1 ? "最高" : "";
             String ry = rb % 100 == 0 ? String.valueOf(rb / 100) : String.format("%.1f", rb / 100.0);
+            // 官方规则: 有实付门槛 -> 满X返Y; 无实付要求 -> 最高返Y (返利浮动)
             c.rebateText = om > 0
-                    ? pre + "满" + (om % 100 == 0 ? om / 100 : String.format("%.1f", om / 100.0)) + "返" + ry
-                    : pre + "返" + ry;
+                    ? "满" + (om % 100 == 0 ? om / 100 : String.format("%.1f", om / 100.0)) + "返" + ry
+                    : "最高返" + ry;
             if (om == 0) c.extraText = "无实付要求";
             else {
                 JSONObject pc = best.optJSONObject("promotion_condition");

@@ -201,7 +201,7 @@ public class PollService extends Service {
 
     static String chipText(int orderMoney, int rebate) {
         String ry = fmtYuan(rebate);
-        return orderMoney > 0 ? "满" + fmtYuan(orderMoney) + "返" + ry : "返" + ry;
+        return orderMoney > 0 ? "满" + fmtYuan(orderMoney) + "返" + ry : "最高返" + ry;
     }
 
     static String fmtYuan(int fen) {

@@ -45,7 +45,6 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:gravity="center_vertical"
             android:orientation="horizontal">
 
             <TextView
@@ -62,7 +61,7 @@
                 android:id="@+id/tvDist"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginLeft="6dp"
+                android:layout_marginLeft="8dp"
                 android:textColor="#9A9A9A"
                 android:textSize="11sp" />
         </LinearLayout>
@@ -93,16 +92,6 @@
                 android:layout_marginLeft="8dp"
                 android:textColor="#9A9A9A"
                 android:textSize="11sp" />
-
-            <TextView
-                android:id="@+id/tvTime"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginLeft="8dp"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:textColor="#AAAAAA"
-                android:textSize="10sp" />
 
             <TextView
                 android:id="@+id/tvCardNew"
@@ -192,22 +181,14 @@
                 android:layout_marginLeft="8dp"
                 android:textSize="11sp"
                 android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvTime"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginLeft="10dp"
+                android:textColor="#AAAAAA"
+                android:textSize="10sp" />
         </LinearLayout>
     </LinearLayout>
-
-    <TextView
-        android:id="@+id/btnGo"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center_vertical"
-        android:layout_marginLeft="10dp"
-        android:background="@drawable/bg_btn_rebate"
-        android:paddingLeft="13dp"
-        android:paddingRight="13dp"
-        android:paddingTop="8dp"
-        android:paddingBottom="8dp"
-        android:text="报名返利"
-        android:textColor="#FFFFFF"
-        android:textSize="12sp"
-        android:textStyle="bold" />
 </LinearLayout>
