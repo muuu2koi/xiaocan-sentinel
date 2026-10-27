@@ -66,26 +66,18 @@ public class PollService extends Service {
         boolean notifiedRestock;
     }
 
-    static final String ACTION_POLL = "POLL";
-    android.app.PendingIntent pollPi;
-
-    /** 闹钟精准唤醒 (RTC_WAKEUP, 5 分钟窗口批量友好): Doze 下也不会漏巡检 */
-    void scheduleNext(long delayMs) {
-        android.app.AlarmManager am = (android.app.AlarmManager) getSystemService(ALARM_SERVICE);
-        if (am == null) return;
-        Intent i = new Intent(this, PollService.class).setAction(ACTION_POLL);
-        pollPi = android.app.PendingIntent.getService(this, 1, i,
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
-        am.setWindow(android.app.AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + delayMs,
-                5 * 60_000L, pollPi);
-    }
-
-    void cancelAlarm() {
-        if (pollPi != null) {
-            android.app.AlarmManager am = (android.app.AlarmManager) getSystemService(ALARM_SERVICE);
-            if (am != null) am.cancel(pollPi);
+    final Runnable tick = new Runnable() {
+        @Override public void run() {
+            if (!running) return;
+            if (inQuietHours()) {
+                lastStatus = "静默时段";
+                updateServiceNotification();
+                handler.postDelayed(this, minutesMs(1));
+                return;
+            }
+            pool.execute(() -> doPoll());
         }
-    }
+    };
 
     @Override public IBinder onBind(Intent i) { return null; }
 
@@ -94,20 +86,6 @@ public class PollService extends Service {
             stopPolling();
             stopSelf();
             return START_NOT_STICKY;
-        }
-        if (running && intent != null && ACTION_POLL.equals(intent.getAction())) {
-            // 闹钟唤醒: 拿短时 WakeLock 做完巡检立刻释放, CPU 其余时间休眠
-            pool.execute(() -> {
-                android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
-                android.os.PowerManager.WakeLock wl = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "xc:poll");
-                try {
-                    wl.acquire(45_000);
-                    doPoll();
-                } finally {
-                    try { wl.release(); } catch (Exception ignore) { }
-                }
-            });
-            return START_STICKY;
         }
         startPolling();
         return START_STICKY;
@@ -121,12 +99,12 @@ public class PollService extends Service {
         loadArchive();
         api = buildApi();
         startForeground(1, buildServiceNotification("初始化..."));
-        scheduleNext(1500);
+        handler.post(tick);
     }
 
     void stopPolling() {
         running = false;
-        cancelAlarm();
+        handler.removeCallbacks(tick);
         getSharedPreferences(getPackageName(), MODE_PRIVATE).edit().putBoolean(PREF_RUNNING, false).apply();
     }
 
@@ -144,19 +122,10 @@ public class PollService extends Service {
     void doPoll() {
         if (!running) return;
         SharedPreferences p = getSharedPreferences(getPackageName(), MODE_PRIVATE);
-        double lat = parseD(p.getString("lat", "23.020500"), 23.020500);
-        double lng = parseD(p.getString("lng", "113.751800"), 113.751800);
-        if (inQuietHours()) {
-            // 静默时段: 不发请求也不唤醒, 直接把下一次闹钟排到静默结束后
-            lastStatus = "静默时段";
-            updateServiceNotification();
-            scheduleNext(msUntilQuietEnd());
-            appendLog("静默时段, 跳过本次巡检");
-            return;
-        }
+        double lat = parseD(p.getString("lat", "23.065594"), 23.065594);
+        double lng = parseD(p.getString("lng", "113.977765"), 113.977765);
         try {
-            int pages = Math.max(1, Math.min(4, parseInt(p.getString("poll_pages", "2"), 2)));
-            JSONArray list = api.fetchFeedAll(lat, lng, pages);
+            JSONArray list = api.fetchFeedAll(lat, lng, 4);
             handleSuccess(list);
             consecutiveFails = 0;
             lastPollTs = System.currentTimeMillis();
@@ -174,20 +143,7 @@ public class PollService extends Service {
         } else {
             delay = (long) (minutesMs(baseMin) * (0.75 + Math.random() * 0.5));
         }
-        scheduleNext(delay);
-    }
-
-    /** 距静默结束还有多少毫秒 (至少 60s, 避免边界抖动) */
-    long msUntilQuietEnd() {
-        try {
-            SharedPreferences p = getSharedPreferences(getPackageName(), MODE_PRIVATE);
-            SimpleDateFormat sdf = new SimpleDateFormat("HH:mm", Locale.ROOT);
-            Date now = sdf.parse(sdf.format(new Date()));
-            Date end = sdf.parse(p.getString("quiet_end", "07:30"));
-            long diff = end.getTime() - now.getTime();
-            if (diff < 60_000L) diff += 24 * 3600_000L; // 跨午夜
-            return Math.max(diff, 60_000L);
-        } catch (Exception e) { return minutesMs(5); }
+        handler.postDelayed(tick, delay);
     }
 
     void handleSuccess(JSONArray list) {

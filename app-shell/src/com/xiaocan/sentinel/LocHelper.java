@@ -41,28 +41,19 @@ public class LocHelper {
                     cb.onFix(l.getLatitude(), l.getLongitude(), "手机定位");
                 }
             };
-            // 省电策略: 网络定位功耗低先请求; GPS 芯片启动开销大, 延迟 4 秒作二段兜底
             for (String p : providers) {
-                boolean isGps = LocationManager.GPS_PROVIDER.equals(p);
-                boolean isNet = LocationManager.NETWORK_PROVIDER.equals(p);
-                if (!isGps && !isNet) continue;
-                Runnable req = () -> {
-                    if (done[0]) return;
-                    try {
-                        if (Build.VERSION.SDK_INT >= 30) {
-                            lm.getCurrentLocation(p, null, exec, l -> {
-                                if (!done[0] && l != null) {
-                                    done[0] = true;
-                                    h.removeCallbacks(timeout);
-                                    cb.onFix(l.getLatitude(), l.getLongitude(), "手机定位");
-                                }
-                            });
-                        } else {
-                            lm.requestSingleUpdate(p, listener[0], Looper.getMainLooper());
+                if (!LocationManager.GPS_PROVIDER.equals(p) && !LocationManager.NETWORK_PROVIDER.equals(p)) continue;
+                if (Build.VERSION.SDK_INT >= 30) {
+                    lm.getCurrentLocation(p, null, exec, l -> {
+                        if (!done[0] && l != null) {
+                            done[0] = true;
+                            h.removeCallbacks(timeout);
+                            cb.onFix(l.getLatitude(), l.getLongitude(), "手机定位");
                         }
-                    } catch (Exception ignore) { }
-                };
-                if (isGps) h.postDelayed(req, 4000); else req.run();
+                    });
+                } else {
+                    lm.requestSingleUpdate(p, listener[0], Looper.getMainLooper());
+                }
             }
             h.postDelayed(timeout, 12000);
         } catch (SecurityException se) {
@@ -83,5 +74,61 @@ public class LocHelper {
             }
         } catch (SecurityException ignore) { }
         return best;
+    }
+}
+
+
+interface CityCb { void onCity(String city); }
+
+class CityResolver {
+    private static final java.util.HashMap<String, String> cache = new java.util.HashMap<>();
+    private static final okhttp3.OkHttpClient client = new okhttp3.OkHttpClient.Builder()
+            .connectTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(8, java.util.concurrent.TimeUnit.SECONDS).build();
+
+    /** 坐标 -> 市级名称 (系统 Geocoder 优先, OSM 兜底); 按 0.05 度网格缓存避免重复请求 */
+    public static void city(Context c, double lat, double lng, CityCb cb) {
+        String grid = String.format(java.util.Locale.ROOT, "%.1f,%.1f", lat, lng);
+        synchronized (cache) {
+            String hit = cache.get(grid);
+            if (hit != null) { cb.onCity(hit); return; }
+        }
+        new Thread(() -> {
+            String city = null;
+            try {
+                android.location.Geocoder g = new android.location.Geocoder(c, java.util.Locale.CHINA);
+                java.util.List<android.location.Address> list = g.getFromLocation(lat, lng, 1);
+                if (list != null && !list.isEmpty()) {
+                    String locality = list.get(0).getLocality();
+                    String admin = list.get(0).getAdminArea();
+                    if (locality != null && !locality.isEmpty()) city = locality;
+                    else if (admin != null && !admin.isEmpty()) city = admin;
+                }
+            } catch (Exception ignore) { }
+            if (city == null) {
+                try {
+                    okhttp3.Request r = new okhttp3.Request.Builder()
+                            .url("https://nominatim.openstreetmap.org/reverse?lat=" + lat + "&lon=" + lng
+                                    + "&zoom=10&format=json&accept-language=zh-CN")
+                            .header("User-Agent", "xiaocan-sentinel/1.0 (personal monitor)")
+                            .build();
+                    okhttp3.Response resp = client.newCall(r).execute();
+                    if (resp.isSuccessful() && resp.body() != null) {
+                        org.json.JSONObject o = new org.json.JSONObject(resp.body().string());
+                        org.json.JSONObject ad = o.optJSONObject("address");
+                        if (ad != null) {
+                            city = ad.optString("city", null);
+                            if (city == null || city.isEmpty()) city = ad.optString("county", null);
+                        }
+                    }
+                } catch (Exception ignore) { }
+            }
+            synchronized (cache) {
+                cache.put(grid, city == null ? "" : city);
+                if (cache.size() > 50) cache.clear();
+            }
+            String result = city;
+            new Handler(Looper.getMainLooper()).post(() -> cb.onCity(result));
+        }).start();
     }
 }
