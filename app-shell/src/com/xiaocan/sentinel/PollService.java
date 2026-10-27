@@ -96,6 +96,8 @@ public class PollService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
+        // getForegroundService 唤醒要求 5 秒内进前台: 无论哪条路径, 第一时间 startForeground
+        startForeground(1, buildServiceNotification(lastStatus.isEmpty() ? "初始化..." : lastStatus));
         if (running && intent != null && ACTION_POLL.equals(intent.getAction())) {
             // 闹钟唤醒: 拿短时 WakeLock 做完巡检立刻释放, CPU 其余时间休眠
             pool.execute(() -> {
@@ -171,7 +173,7 @@ public class PollService extends Service {
         long delay;
         if (consecutiveFails > 0) {
             long backoff = minutesMs(baseMin) * (1L << Math.min(consecutiveFails, 5));
-            delay = Math.min(backoff, minutesMs(30));
+            delay = Math.min(backoff, minutesMs(60));
         } else {
             delay = (long) (minutesMs(baseMin) * (0.75 + Math.random() * 0.5));
         }
@@ -405,9 +407,8 @@ public class PollService extends Service {
         lastStatus = "失败x" + consecutiveFails + " (" + why + ")";
         appendLog("失败 " + why);
         if (consecutiveFails == 10) {
-            notifySystem("⏸ 监控已自动暂停", "连续失败: " + why + "\n请打开小蚕哨兵检查网络后重新启动");
-            stopPolling();
-            stopSelf();
+            // 不再自动停止服务 (v1.2 熔断会让监听静默死掉): 通知用户后放慢节奏继续尝试, 网络恢复自动回归
+            notifySystem("⚠ 监控连续失败, 已放慢巡检", "原因: " + why + "\n会继续每 60 分钟尝试, 恢复后自动回到正常频率");
         }
     }
 
