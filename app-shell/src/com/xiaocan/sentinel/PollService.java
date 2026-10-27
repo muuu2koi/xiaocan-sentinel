@@ -447,8 +447,7 @@ public class PollService extends Service {
 
     void loadState() {
         try {
-            hadPriorState = stateFile().exists();
-            if (!hadPriorState) { stateLoaded = true; return; }
+            if (!stateFile().exists()) { stateLoaded = true; return; }
             FileInputStream fin = new FileInputStream(stateFile());
             byte[] buf = new byte[(int) stateFile().length()];
             int n = fin.read(buf);
@@ -470,13 +469,32 @@ public class PollService extends Service {
                 st.notifiedRestock = v.optBoolean("nr", false);
                 items.put(Long.parseLong(k), st);
             }
-        } catch (Exception ignore) { }
+            // 只有成功解析且确实有历史, 才视为「有基线」; 文件损坏/为空 -> 回退首巡静默
+            hadPriorState = !items.isEmpty();
+        } catch (Exception ignore) {
+            items.clear();
+            hadPriorState = false;
+        }
         stateLoaded = true;
     }
 
     void ensureStateLoaded() { if (!stateLoaded) loadState(); }
 
     void saveState() {
+        // 原子写: 先写临时文件再改名, 进程被杀也不会留半个坏 JSON
+        try {
+            java.io.File tmp = new java.io.File(stateFile().getAbsolutePath() + ".tmp");
+            writeStateTo(tmp);
+            if (!tmp.renameTo(stateFile())) {
+                stateFile().delete();
+                writeStateTo(stateFile());
+            }
+            return;
+        } catch (Exception ignore) { }
+        writeStateTo(stateFile());
+    }
+
+    void writeStateTo(java.io.File f) {
         try {
             JSONObject o = new JSONObject();
             for (Map.Entry<Long, ItemState> e : items.entrySet()) {
@@ -492,7 +510,7 @@ public class PollService extends Service {
                 v.put("nr", st.notifiedRestock);
                 o.put(String.valueOf(e.getKey()), v);
             }
-            FileOutputStream fo = new FileOutputStream(stateFile());
+            FileOutputStream fo = new FileOutputStream(f);
             fo.write(o.toString().getBytes("UTF-8"));
             fo.close();
         } catch (Exception ignore) { }
@@ -532,8 +550,8 @@ public class PollService extends Service {
     }
 
     void updateServiceNotification() {
-        NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        nm.notify(1, buildServiceNotification(lastStatus));
+        // MIUI 上 notify(1) 更新前台通知经常不生效, 重调 startForeground 才可靠
+        startForeground(1, buildServiceNotification(lastStatus));
     }
 
     Notification buildServiceNotification(String status) {

@@ -156,6 +156,12 @@ public class HomeActivity extends Activity {
             if (lat != 0 && lng != 0) {
                 p.edit().putString("lat", String.valueOf(lat)).putString("lng", String.valueOf(lng)).apply();
                 main.post(() -> tvLoc.setText("📍 " + String.format("%.4f, %.4f · %s", lat, lng, src)));
+                // 反查市级地址, 成功后替换坐标显示
+                CityResolver.city(this, lat, lng, city -> {
+                    if (city != null && !city.isEmpty()) {
+                        tvLoc.setText("📍 " + city + " · " + src);
+                    }
+                });
                 fetchWith(lat, lng);
             } else {
                 main.post(() -> tvLoc.setText("📍 定位失败, 使用默认位置"));
