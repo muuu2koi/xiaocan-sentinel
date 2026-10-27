@@ -54,7 +54,7 @@ App 是纯原生 Android 实现：
 
 | 首页 | 监听设置 | 巡检动态 |
 |---|---|---|
-| ![首页](screenshots/home.jpg) | ![监听设置](screenshots/settings-1.jpg) | ![巡检动态](screenshots/settings-2.jpg) |
+| ![首页](screenshots/shot-home.jpg) | ![监听设置](screenshots/shot-settings-1.jpg) | ![巡检动态](screenshots/shot-settings-2.jpg) |
 
 ## 目录结构
 

@@ -550,8 +550,9 @@ public class PollService extends Service {
     }
 
     void updateServiceNotification() {
-        // MIUI 上 notify(1) 更新前台通知经常不生效, 重调 startForeground 才可靠
-        startForeground(1, buildServiceNotification(lastStatus));
+        Notification n = buildServiceNotification(lastStatus);
+        startForeground(1, n);                          // 官方更新方式
+        ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(1, n); // MIUI 兜底
     }
 
     Notification buildServiceNotification(String status) {
