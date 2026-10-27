@@ -74,7 +74,8 @@ public class PollService extends Service {
         android.app.AlarmManager am = (android.app.AlarmManager) getSystemService(ALARM_SERVICE);
         if (am == null) return;
         Intent i = new Intent(this, PollService.class).setAction(ACTION_POLL);
-        pollPi = android.app.PendingIntent.getService(this, 1, i,
+        // getForegroundService: 进程被划掉后, 闹钟也能从后台合法拉起前台服务 (getService 在 Android 8+ 后台会被拒)
+        pollPi = android.app.PendingIntent.getForegroundService(this, 1, i,
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
         am.setWindow(android.app.AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + delayMs,
                 5 * 60_000L, pollPi);
