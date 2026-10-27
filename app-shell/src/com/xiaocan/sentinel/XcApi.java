@@ -32,6 +32,12 @@ public final class XcApi {
     public static final String UA = "XC;Android;3.21.6;";
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
 
+    private static final OkHttpClient SHARED = new OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .writeTimeout(15, TimeUnit.SECONDS)
+            .connectionPool(new okhttp3.ConnectionPool(5, 5, TimeUnit.MINUTES))
+            .build();
     private final OkHttpClient client;
     // 账号/环境参数 (匿名模式全部留空/0)
     public String token;
@@ -44,11 +50,7 @@ public final class XcApi {
     public String appVersion = "3.21.6.4";
 
     public XcApi() {
-        client = new OkHttpClient.Builder()
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(20, TimeUnit.SECONDS)
-                .writeTimeout(15, TimeUnit.SECONDS)
-                .build();
+        client = SHARED;
     }
 
     public static String md5(String s) {

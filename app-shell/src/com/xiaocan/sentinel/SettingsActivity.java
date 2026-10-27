@@ -557,8 +557,36 @@ public class SettingsActivity extends Activity {
         hint.setText("巡检间隔自带随机抖动, 更像真人浏览 (上限 60 分钟)");
         hint.setPadding(0, (int) (6 * getResources().getDisplayMetrics().density), 0, 0);
         box.addView(hint);
+
+        TextView l3 = new TextView(this);
+        l3.setTextSize(13);
+        l3.setTextColor(0xFF666666);
+        int cur = Math.max(1, Math.min(4, parseInt2(p.getString("poll_pages", "2"), 2)));
+        l3.setText("巡检深度: " + cur + " 页 (约 " + (cur * 20) + " 条)");
+        l3.setPadding(0, (int) (12 * getResources().getDisplayMetrics().density), 0, 0);
+        box.addView(l3);
+        SeekBar seekPages = new SeekBar(this);
+        seekPages.setMax(3);
+        seekPages.setProgress(cur - 1);
+        seekPages.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar s, int v, boolean f) { l3.setText("巡检深度: " + (v + 1) + " 页 (约 " + ((v + 1) * 20) + " 条)"); }
+            public void onStartTrackingTouch(SeekBar s) { }
+            public void onStopTrackingTouch(SeekBar s) {
+                p.edit().putString("poll_pages", String.valueOf(s.getProgress() + 1)).apply();
+                toast("巡检深度已保存, 越少越省电");
+            }
+        });
+        box.addView(seekPages);
+        TextView hint2 = new TextView(this);
+        hint2.setTextSize(11);
+        hint2.setTextColor(0xFFB0B0B0);
+        hint2.setText("页数越少越省电; 新活动一般集中在前两页");
+        hint2.setPadding(0, (int) (6 * getResources().getDisplayMetrics().density), 0, 0);
+        box.addView(hint2);
         return box;
     }
+
+    static int parseInt2(String s, int dft) { try { return Integer.parseInt(s.trim()); } catch (Exception e) { return dft; } }
 
     // ---- 免打扰卡 ----
     View quietCard() {

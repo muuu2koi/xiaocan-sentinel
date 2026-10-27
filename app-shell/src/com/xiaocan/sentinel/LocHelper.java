@@ -41,19 +41,28 @@ public class LocHelper {
                     cb.onFix(l.getLatitude(), l.getLongitude(), "手机定位");
                 }
             };
+            // 省电策略: 网络定位功耗低先请求; GPS 芯片启动开销大, 延迟 4 秒作二段兜底
             for (String p : providers) {
-                if (!LocationManager.GPS_PROVIDER.equals(p) && !LocationManager.NETWORK_PROVIDER.equals(p)) continue;
-                if (Build.VERSION.SDK_INT >= 30) {
-                    lm.getCurrentLocation(p, null, exec, l -> {
-                        if (!done[0] && l != null) {
-                            done[0] = true;
-                            h.removeCallbacks(timeout);
-                            cb.onFix(l.getLatitude(), l.getLongitude(), "手机定位");
+                boolean isGps = LocationManager.GPS_PROVIDER.equals(p);
+                boolean isNet = LocationManager.NETWORK_PROVIDER.equals(p);
+                if (!isGps && !isNet) continue;
+                Runnable req = () -> {
+                    if (done[0]) return;
+                    try {
+                        if (Build.VERSION.SDK_INT >= 30) {
+                            lm.getCurrentLocation(p, null, exec, l -> {
+                                if (!done[0] && l != null) {
+                                    done[0] = true;
+                                    h.removeCallbacks(timeout);
+                                    cb.onFix(l.getLatitude(), l.getLongitude(), "手机定位");
+                                }
+                            });
+                        } else {
+                            lm.requestSingleUpdate(p, listener[0], Looper.getMainLooper());
                         }
-                    });
-                } else {
-                    lm.requestSingleUpdate(p, listener[0], Looper.getMainLooper());
-                }
+                    } catch (Exception ignore) { }
+                };
+                if (isGps) h.postDelayed(req, 4000); else req.run();
             }
             h.postDelayed(timeout, 12000);
         } catch (SecurityException se) {
