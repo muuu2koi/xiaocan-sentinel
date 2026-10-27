@@ -32,6 +32,12 @@ public final class XcApi {
     public static final String UA = "XC;Android;3.21.6;";
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
 
+    private static final OkHttpClient SHARED = new OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .writeTimeout(15, TimeUnit.SECONDS)
+            .connectionPool(new okhttp3.ConnectionPool(5, 5, TimeUnit.MINUTES))
+            .build();
     private final OkHttpClient client;
     // 账号/环境参数 (匿名模式全部留空/0)
     public String token;
@@ -44,11 +50,7 @@ public final class XcApi {
     public String appVersion = "3.21.6.4";
 
     public XcApi() {
-        client = new OkHttpClient.Builder()
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(20, TimeUnit.SECONDS)
-                .writeTimeout(15, TimeUnit.SECONDS)
-                .build();
+        client = SHARED;
     }
 
     public static String md5(String s) {
@@ -164,6 +166,11 @@ public final class XcApi {
 
     /** 首页 Feed (按店铺活动流, 自带 distance/left_number, 与小蚕首页同源) */
     public String fetchFeed(double lat, double lng, int offset, int number) throws Exception {
+        return fetchFeed(lat, lng, offset, number, 0);
+    }
+
+    /** sort: 0=推荐, 1=距离。距离序能把附近但排在推荐流后几十位的活动带回首页。 */
+    public String fetchFeed(double lat, double lng, int offset, int number, int sort) throws Exception {
         JSONObject body = new JSONObject();
         body.put("promotion_category", 0);
         body.put("is_show_mt", true);
@@ -175,25 +182,44 @@ public final class XcApi {
         body.put("rebate_type", 0);
         body.put("scene", 1);
         if (silkId != 0) body.put("silk_id", silkId);
-        body.put("sort", 0);
+        body.put("sort", sort);
         return call("SilkwormFusion", "FusionService.GetFeedPromotions", body.toString());
     }
 
-    /** 拉取全部 Feed 分页, 合并 feed_items 数组 (最多 maxPages 页) */
-    public JSONArray fetchFeedAll(double lat, double lng, int maxPages) throws Exception {
+    /**
+     * 全量活动：距离序每页 50 条，一直翻到接口返回不足一页为止。
+     * 实测距离序与推荐序是同一批活动的不同顺序，因此无需再重复拉推荐流。
+     */
+    public JSONArray fetchFeedAll(double lat, double lng) throws Exception {
         JSONArray all = new JSONArray();
-        int number = 20;
-        for (int p = 0; p < maxPages; p++) {
-            String resp = fetchFeed(lat, lng, p * number, number);
-            JSONObject root = new JSONObject(resp);
-            int code = root.getJSONObject("status").optInt("code", -1);
-            if (code != 0) throw new ApiException(200, "业务码 " + code);
-            JSONArray items = root.optJSONArray("feed_items");
-            if (items == null || items.length() == 0) break;
-            for (int i = 0; i < items.length(); i++) all.put(items.getJSONObject(i));
-            if (items.length() < number) break;
+        java.util.HashSet<Long> seen = new java.util.HashSet<>();
+        int number = 50;
+        int offset = 0;
+        // 防止服务端异常重复返回同一页导致无限循环；上限远高于实际活动量。
+        for (int page = 0; page < 40; page++) {
+            JSONArray items = feedPage(lat, lng, offset, number, 1);
+            int added = 0;
+            for (int i = 0; i < items.length(); i++) {
+                JSONObject it = items.getJSONObject(i);
+                long pid = it.optLong("promotion_id", 0);
+                if (pid != 0 && seen.add(pid)) {
+                    all.put(it);
+                    added++;
+                }
+            }
+            offset += number;
+            if (items.length() < number || added == 0) break;
         }
         return all;
+    }
+
+    JSONArray feedPage(double lat, double lng, int offset, int number, int sort) throws Exception {
+        String resp = fetchFeed(lat, lng, offset, number, sort);
+        JSONObject root = new JSONObject(resp);
+        int code = root.getJSONObject("status").optInt("code", -1);
+        if (code != 0) throw new ApiException(200, "业务码 " + code);
+        JSONArray items = root.optJSONArray("feed_items");
+        return items == null ? new JSONArray() : items;
     }
 
     public static class ApiException extends RuntimeException {

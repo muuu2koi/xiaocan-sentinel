@@ -41,19 +41,28 @@ public class LocHelper {
                     cb.onFix(l.getLatitude(), l.getLongitude(), "手机定位");
                 }
             };
+            // 省电策略: 网络定位功耗低先请求; GPS 芯片启动开销大, 延迟 4 秒作二段兜底
             for (String p : providers) {
-                if (!LocationManager.GPS_PROVIDER.equals(p) && !LocationManager.NETWORK_PROVIDER.equals(p)) continue;
-                if (Build.VERSION.SDK_INT >= 30) {
-                    lm.getCurrentLocation(p, null, exec, l -> {
-                        if (!done[0] && l != null) {
-                            done[0] = true;
-                            h.removeCallbacks(timeout);
-                            cb.onFix(l.getLatitude(), l.getLongitude(), "手机定位");
+                boolean isGps = LocationManager.GPS_PROVIDER.equals(p);
+                boolean isNet = LocationManager.NETWORK_PROVIDER.equals(p);
+                if (!isGps && !isNet) continue;
+                Runnable req = () -> {
+                    if (done[0]) return;
+                    try {
+                        if (Build.VERSION.SDK_INT >= 30) {
+                            lm.getCurrentLocation(p, null, exec, l -> {
+                                if (!done[0] && l != null) {
+                                    done[0] = true;
+                                    h.removeCallbacks(timeout);
+                                    cb.onFix(l.getLatitude(), l.getLongitude(), "手机定位");
+                                }
+                            });
+                        } else {
+                            lm.requestSingleUpdate(p, listener[0], Looper.getMainLooper());
                         }
-                    });
-                } else {
-                    lm.requestSingleUpdate(p, listener[0], Looper.getMainLooper());
-                }
+                    } catch (Exception ignore) { }
+                };
+                if (isGps) h.postDelayed(req, 4000); else req.run();
             }
             h.postDelayed(timeout, 12000);
         } catch (SecurityException se) {
@@ -86,7 +95,7 @@ class CityResolver {
             .connectTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(8, java.util.concurrent.TimeUnit.SECONDS).build();
 
-    /** 坐标 -> 市级名称 (系统 Geocoder 优先, OSM 兜底); 按 0.05 度网格缓存避免重复请求 */
+    /** 坐标 -> 市级名称 (系统 Geocoder 优先, OSM 兜底); 结果按 0.05 度网格缓存, 不重复请求 */
     public static void city(Context c, double lat, double lng, CityCb cb) {
         String grid = String.format(java.util.Locale.ROOT, "%.1f,%.1f", lat, lng);
         synchronized (cache) {
@@ -99,10 +108,11 @@ class CityResolver {
                 android.location.Geocoder g = new android.location.Geocoder(c, java.util.Locale.CHINA);
                 java.util.List<android.location.Address> list = g.getFromLocation(lat, lng, 1);
                 if (list != null && !list.isEmpty()) {
-                    String locality = list.get(0).getLocality();
-                    String admin = list.get(0).getAdminArea();
-                    if (locality != null && !locality.isEmpty()) city = locality;
-                    else if (admin != null && !admin.isEmpty()) city = admin;
+                    String a = list.get(0).getAdminArea();
+                    String l = list.get(0).getLocality();
+                    if (l != null && !l.isEmpty()) city = l;
+                    else if (a != null && !a.isEmpty()) city = a;
+                    else if (list.get(0).getSubAdminArea() != null) city = list.get(0).getSubAdminArea();
                 }
             } catch (Exception ignore) { }
             if (city == null) {
@@ -127,8 +137,8 @@ class CityResolver {
                 cache.put(grid, city == null ? "" : city);
                 if (cache.size() > 50) cache.clear();
             }
-            String result = city;
-            new Handler(Looper.getMainLooper()).post(() -> cb.onCity(result));
+            String f = city;
+            new Handler(Looper.getMainLooper()).post(() -> cb.onCity(f));
         }).start();
     }
 }

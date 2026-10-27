@@ -41,7 +41,7 @@ public class HomeActivity extends Activity {
     EditText etSearch;
     CardAdapter adapter;
     List<CardAdapter.Card> lastCards = new ArrayList<>();
-    String[] sortNames = {"默认顺序", "按距离", "按返利", "按名额"};
+    String[] sortNames = {"默认顺序", "按距离", "按返利", "按名额", "未开抢优先"};
     SharedPreferences p;
     final Handler main = new Handler(Looper.getMainLooper());
     final ExecutorService pool = Executors.newSingleThreadExecutor();
@@ -56,8 +56,9 @@ public class HomeActivity extends Activity {
             lastCards.sort((a, b) -> Integer.compare(b.rebateVal, a.rebateVal));
         } else if (m == 3) {
             lastCards.sort((a, b) -> Integer.compare(b.quota, a.quota));
+        } else if (m == 4) {
+            lastCards.sort((a, b) -> Boolean.compare(b.notStarted, a.notStarted));
         }
-        // m == 0: 后端原始顺序, 不排序
         adapter.setData(lastCards);
     }
 
@@ -76,7 +77,7 @@ public class HomeActivity extends Activity {
         tvSort = findViewById(R.id.tvSort);
         tvSort.setText(sortNames[sortMode()] + " ▾");
         tvSort.setOnClickListener(v -> {
-            int m = (sortMode() + 1) % 4;
+            int m = (sortMode() + 1) % sortNames.length;
             p.edit().putString("sort_mode", String.valueOf(m)).apply();
             tvSort.setText(sortNames[m] + " ▾");
             applySort();
@@ -127,6 +128,11 @@ public class HomeActivity extends Activity {
     protected void onResume() {
         super.onResume();
         boolean running = p.getBoolean(PollService.PREF_RUNNING, false);
+        if (running) {
+            // 自愈: 标记为运行中但服务可能已被系统/安装更新杀掉, 打开 App 必定拉活
+            Intent keep = new Intent(this, PollService.class);
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(keep); else startService(keep);
+        }
         tvStatus.setText(running ? "监听中" : "已停止");
         tvStatus.setBackgroundResource(running ? R.drawable.bg_chip_green : R.drawable.bg_search);
         tvStatus.setTextColor(running ? 0xFF2BB673 : 0xFF9A9A9A);
@@ -158,7 +164,9 @@ public class HomeActivity extends Activity {
                 main.post(() -> tvLoc.setText("📍 " + String.format("%.4f, %.4f · %s", lat, lng, src)));
                 // 反查市级地址, 成功后替换坐标显示
                 CityResolver.city(this, lat, lng, city -> {
-                    if (city != null && !city.isEmpty()) tvLoc.setText("📍 " + city + " · " + src);
+                    if (city != null && !city.isEmpty()) {
+                        tvLoc.setText("📍 " + city + " · " + src);
+                    }
                 });
                 fetchWith(lat, lng);
             } else {
@@ -177,7 +185,7 @@ public class HomeActivity extends Activity {
         pool.execute(() -> {
             try {
                 XcApi api = buildApi();
-                JSONArray items = api.fetchFeedAll(lat, lng, 4);
+                JSONArray items = api.fetchFeedAll(lat, lng);
                 List<CardAdapter.Card> cards = buildCards(items);
                 Set<Long> fresh = loadFreshIds();
                 lastCards = cards;
@@ -199,64 +207,67 @@ public class HomeActivity extends Activity {
         });
     }
 
+    JSONArray mergeUpcoming(JSONArray feed) {
+        try {
+            Set<Long> ids = new HashSet<>();
+            for (int i = 0; i < feed.length(); i++) {
+                ids.add(feed.getJSONObject(i).optLong("promotion_id", 0));
+            }
+            JSONArray cached = PollService.readUpcoming(getFilesDir());
+            for (int i = 0; i < cached.length(); i++) {
+                JSONObject it = cached.getJSONObject(i);
+                long pid = it.optLong("promotion_id", 0);
+                if (pid != 0 && !ids.contains(pid)) {
+                    ids.add(pid);
+                    feed.put(it);
+                }
+            }
+        } catch (Exception ignore) { }
+        return feed;
+    }
+
     List<CardAdapter.Card> buildCards(JSONArray items) throws Exception {
+        items = mergeUpcoming(items);
         Set<Long> fresh = loadFreshIds();
-        HashMap<String, List<JSONObject>> groups = new HashMap<>();
+        List<CardAdapter.Card> cards = new ArrayList<>();
+        // 一条活动一张卡，不再把同店活动合并隐藏；列表与巡检使用同一份全量数据。
         for (int i = 0; i < items.length(); i++) {
             JSONObject it = items.getJSONObject(i);
-            String key = String.valueOf(it.optLong("same_group_id", 0));
-            if ("0".equals(key)) key = "s" + it.optLong("store_id", i);
-            List<JSONObject> l = groups.get(key);
-            if (l == null) { l = new ArrayList<>(); groups.put(key, l); }
-            l.add(it);
-        }
-        List<CardAdapter.Card> cards = new ArrayList<>();
-        for (String key : groups.keySet()) {
-            List<JSONObject> acts = groups.get(key);
-            acts.sort((a, b) -> b.optInt("user_rebate", 0) - a.optInt("user_rebate", 0));
-            JSONObject first = acts.get(0);
-            JSONObject st = first.optJSONObject("store") != null ? first.optJSONObject("store") : new JSONObject();
+            JSONObject st = it.optJSONObject("store") != null ? it.optJSONObject("store") : new JSONObject();
 
             CardAdapter.Card c = new CardAdapter.Card();
-            c.key = first.optLong("same_group_id", first.optLong("store_id"));
+            c.key = it.optLong("promotion_id", it.optLong("same_group_id", i));
             c.name = st.optString("name", "未知店铺");
             c.icon = st.optString("icon", "");
-            if (c.icon.isEmpty()) c.icon = first.optString("icon", "");
-            c.platform = st.optInt("store_platform", first.optInt("store_platform", 0));
-            int dist = first.optInt("distance", -1);
+            if (c.icon.isEmpty()) c.icon = it.optString("icon", "");
+            c.platform = st.optInt("store_platform", it.optInt("store_platform", 0));
+            int dist = it.optInt("distance", -1);
             c.distText = dist >= 0 ? (dist >= 1000 ? String.format("%.1fkm", dist / 1000.0) : dist + "m") : "";
-            c.acts = acts.size();
+            c.acts = 1;
             c.extraText = null;
-            boolean anyNew = false;
-            // 卡片行展示返利最高那个活动; 多活动以「N 个活动」体现
-            JSONObject best = acts.get(0);
-            int om = best.optInt("order_money", 0);
-            int rb = best.optInt("user_rebate", 0);
-            // 官方语义 (HAR 真值反推): rebate_condition==99 -> 无需评价; order_money==0 -> 无实付要求
-            c.noReview = best.optInt("rebate_condition", 0) == 99;
-            c.rebateVal = best.optInt("user_rebate", 0);
+            int om = it.optInt("order_money", 0);
+            int rb = it.optInt("user_rebate", 0);
+            // 官方语义: rebate_condition==99 -> 无需评价; order_money==0 -> 无实付要求
+            c.noReview = it.optInt("rebate_condition", 0) == 99;
+            c.rebateVal = rb;
             String ry = rb % 100 == 0 ? String.valueOf(rb / 100) : String.format("%.1f", rb / 100.0);
-            // 官方规则: 有实付门槛 -> 满X返Y; 无实付要求 -> 最高返Y (返利浮动)
             c.rebateText = om > 0
                     ? "满" + (om % 100 == 0 ? om / 100 : String.format("%.1f", om / 100.0)) + "返" + ry
                     : "最高返" + ry;
             if (om == 0) c.extraText = "无实付要求";
             else {
-                JSONObject pc = best.optJSONObject("promotion_condition");
+                JSONObject pc = it.optJSONObject("promotion_condition");
                 if (pc != null && pc.length() > 0) c.extraText = "券专享";
             }
-            c.timeText = (best.optString("start_time_hour", "00:00")) + "-" + (best.optString("end_time_hour", "23:59")) + " 可抢";
-            c.quota = best.optInt("left_number", 0);
+            c.notStarted = PollService.isNotStarted(it);
+            c.timeText = c.notStarted
+                    ? "未开抢 · " + it.optString("start_time_hour", "时间待定") + " 开抢"
+                    : (it.optString("start_time_hour", "00:00")) + "-" + (it.optString("end_time_hour", "23:59")) + " 可抢";
+            c.quota = it.optInt("left_number", 0);
             c.quotaPct = Math.min(100, c.quota * 8);
-            for (JSONObject a : acts) if (fresh.contains(a.optLong("promotion_id", 0))) anyNew = true;
-            c.isNew = anyNew;
+            c.isNew = fresh.contains(it.optLong("promotion_id", 0));
             cards.add(c);
         }
-        cards.sort((a, b) -> {
-            try {
-                return Float.compare(parseFloat(a.distText), parseFloat(b.distText));
-            } catch (Exception e) { return 0; }
-        });
         return cards;
     }
 

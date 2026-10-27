@@ -105,8 +105,29 @@ public class ImageLoader {
             FileOutputStream fo = new FileOutputStream(new File(dir, md5(key)));
             rounded.compress(Bitmap.CompressFormat.PNG, 90, fo);
             fo.close();
+            trimDisk();
             return rounded;
         } catch (Exception e) { return null; }
+    }
+
+    /** 磁盘缓存裁剪: 超过 20MB 或 300 个文件时删最旧的 */
+    void trimDisk() {
+        try {
+            File[] fs = dir.listFiles();
+            if (fs == null || fs.length < 200) return;
+            long total = 0;
+            for (File f : fs) total += f.length();
+            if (total <= 20L * 1024 * 1024 && fs.length <= 300) return;
+            java.util.Arrays.sort(fs, (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
+            long budget = 15L * 1024 * 1024;
+            int keep = 150;
+            int removed = 0;
+            for (File f : fs) {
+                if (fs.length - removed <= keep && total <= budget) break;
+                long len = f.length();
+                if (f.delete()) { total -= len; removed++; }
+            }
+        } catch (Exception ignore) { }
     }
 
     Bitmap decode(byte[] data) {

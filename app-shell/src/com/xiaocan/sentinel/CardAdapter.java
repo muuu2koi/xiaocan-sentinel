@@ -26,7 +26,7 @@ public class CardAdapter extends BaseAdapter {
         boolean isNew;
         int acts;
         String rebateText, timeText, extraText;
-        boolean noReview;
+        boolean noReview, notStarted;
         int quota, quotaPct, rebateVal;
     }
 
@@ -106,6 +106,7 @@ public class CardAdapter extends BaseAdapter {
         h.tvPlatform.setTextColor(tb ? 0xFFFF5000 : 0xFFFF9500);
         h.tvPlatform.setBackgroundResource(tb ? R.drawable.bg_chip_rebate : R.drawable.bg_chip_orange);
         if (tb) h.tvPlatform.setTextColor(0xFFFFFFFF);
+        h.tvCount.setVisibility(card.acts > 1 ? View.VISIBLE : View.GONE);
         h.tvCount.setText(card.acts + " 个活动");
 
         h.tvNew.setVisibility(card.isNew ? View.VISIBLE : View.GONE);
@@ -120,9 +121,9 @@ public class CardAdapter extends BaseAdapter {
         }
         h.tvTime.setText(card.timeText);
 
-        h.pbQuota.setProgress(card.quotaPct);
-        h.tvQuota.setText(card.quota > 0 ? "还剩 " + card.quota + " 份" : "已抢光");
-        h.tvQuota.setTextColor(card.quota > 0 ? (card.quota <= 3 ? 0xFFFF3B30 : 0xFFFF6D00) : 0xFFBBBBBB);
+        h.pbQuota.setProgress(card.notStarted ? 0 : card.quotaPct);
+        h.tvQuota.setText(card.notStarted ? "未开抢" : (card.quota > 0 ? "还剩 " + card.quota + " 份" : "已抢光"));
+        h.tvQuota.setTextColor(card.notStarted ? 0xFFFF9500 : (card.quota > 0 ? (card.quota <= 3 ? 0xFFFF3B30 : 0xFFFF6D00) : 0xFFBBBBBB));
 
         v.setOnClickListener(v1 -> openXiaocan());
         return v;

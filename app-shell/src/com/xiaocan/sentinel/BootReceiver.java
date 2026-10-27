@@ -5,10 +5,13 @@ import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 
-/** 开机自启: 仅当之前在监控中时恢复 */
+/** 开机、系统快速重启和应用更新后，仅当之前在监控中时恢复。 */
 public class BootReceiver extends BroadcastReceiver {
     @Override public void onReceive(Context context, Intent intent) {
-        if (!Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) return;
+        String action = intent.getAction();
+        if (!Intent.ACTION_BOOT_COMPLETED.equals(action)
+                && !Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)
+                && !"com.htc.intent.action.QUICKBOOT_POWERON".equals(action)) return;
         boolean wasRunning = context.getSharedPreferences(context.getPackageName(), Context.MODE_PRIVATE)
                 .getBoolean(PollService.PREF_RUNNING, false);
         if (!wasRunning) return;

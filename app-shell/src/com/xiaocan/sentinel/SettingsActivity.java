@@ -557,8 +557,50 @@ public class SettingsActivity extends Activity {
         hint.setText("巡检间隔自带随机抖动, 更像真人浏览 (上限 60 分钟)");
         hint.setPadding(0, (int) (6 * getResources().getDisplayMetrics().density), 0, 0);
         box.addView(hint);
+
+        TextView scope = new TextView(this);
+        scope.setTextSize(13);
+        scope.setTextColor(0xFF666666);
+        scope.setText("巡检范围: 全部活动 (自动翻页至结束)");
+        scope.setPadding(0, (int) (12 * getResources().getDisplayMetrics().density), 0, 0);
+        box.addView(scope);
+        TextView hint2 = new TextView(this);
+        hint2.setTextSize(11);
+        hint2.setTextColor(0xFFB0B0B0);
+        hint2.setText("首页和后台巡检使用同一份全量活动数据");
+        hint2.setPadding(0, (int) (6 * getResources().getDisplayMetrics().density), 0, 0);
+        box.addView(hint2);
+
+        TextView openLabel = new TextView(this);
+        openLabel.setTextSize(13);
+        openLabel.setTextColor(0xFF666666);
+        int openLead = Math.max(0, Math.min(60, parseInt2(p.getString("open_lead_min", "5"), 5)));
+        openLabel.setText(openLead == 0 ? "开抢提醒: 准点通知" : "开抢提醒: 提前 " + openLead + " 分钟");
+        openLabel.setPadding(0, (int) (12 * getResources().getDisplayMetrics().density), 0, 0);
+        box.addView(openLabel);
+        SeekBar seekOpen = new SeekBar(this);
+        seekOpen.setMax(60);
+        seekOpen.setProgress(openLead);
+        seekOpen.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar s, int v, boolean f) {
+                openLabel.setText(v == 0 ? "开抢提醒: 准点通知" : "开抢提醒: 提前 " + v + " 分钟");
+            }
+            public void onStartTrackingTouch(SeekBar s) { }
+            public void onStopTrackingTouch(SeekBar s) {
+                p.edit().putString("open_lead_min", String.valueOf(s.getProgress())).apply();
+                toast("开抢提醒时间已保存");
+            }
+        });
+        box.addView(seekOpen);
+        TextView openHint = new TextView(this);
+        openHint.setTextSize(11);
+        openHint.setTextColor(0xFFB0B0B0);
+        openHint.setText("活动上线但未开抢时会单独提醒，并明确标注未开抢");
+        box.addView(openHint);
         return box;
     }
+
+    static int parseInt2(String s, int dft) { try { return Integer.parseInt(s.trim()); } catch (Exception e) { return dft; } }
 
     // ---- 免打扰卡 ----
     View quietCard() {

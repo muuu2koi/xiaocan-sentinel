@@ -48,6 +48,7 @@ public class PollService extends Service {
     int consecutiveFails = 0;
     long lastPollTs = 0;
     String lastStatus = "";
+    long nextOpenReminderAt = 0;
 
     // 活动状态表 (持久化 files/state.json, H5 首页也读它标 NEW)
     final HashMap<Long, ItemState> items = new HashMap<>();
@@ -64,20 +65,37 @@ public class PollService extends Service {
         long ls;         // last seen (秒): 活动短暂离开列表不立即删除, 防止重复推送
         boolean notifiedNew;
         boolean notifiedRestock;
+        long startTs;            // 开抢时间（Unix 秒）
+        boolean notifiedOpen;    // 已发提前/准点开抢提醒
+        boolean awaitingOpen;    // 曾确认未开抢，开抢后需补发一次
     }
 
-    final Runnable tick = new Runnable() {
-        @Override public void run() {
-            if (!running) return;
-            if (inQuietHours()) {
-                lastStatus = "静默时段";
-                updateServiceNotification();
-                handler.postDelayed(this, minutesMs(1));
-                return;
-            }
-            pool.execute(() -> doPoll());
+    static final String ACTION_POLL = "POLL";
+    android.app.PendingIntent pollPi;
+
+    /** 进程休眠时由系统闹钟唤醒；有精确闹钟权限则按时巡检，无权限时降级为系统合批。 */
+    void scheduleNext(long delayMs) {
+        android.app.AlarmManager am = (android.app.AlarmManager) getSystemService(ALARM_SERVICE);
+        if (am == null) return;
+        Intent i = new Intent(this, PollService.class).setAction(ACTION_POLL);
+        // getForegroundService: 进程被划掉后, 闹钟也能从后台合法拉起前台服务 (getService 在 Android 8+ 后台会被拒)
+        pollPi = android.app.PendingIntent.getForegroundService(this, 1, i,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
+        long triggerAt = System.currentTimeMillis() + Math.max(1000L, delayMs);
+        if (android.os.Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms()) {
+            am.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, triggerAt, pollPi);
+        } else {
+            // 用户在系统设置中关闭“闹钟和提醒”时仍可工作，避免静默停摆。
+            am.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, triggerAt, pollPi);
         }
-    };
+    }
+
+    void cancelAlarm() {
+        if (pollPi != null) {
+            android.app.AlarmManager am = (android.app.AlarmManager) getSystemService(ALARM_SERVICE);
+            if (am != null) am.cancel(pollPi);
+        }
+    }
 
     @Override public IBinder onBind(Intent i) { return null; }
 
@@ -87,8 +105,49 @@ public class PollService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
+        // 冷启动时先建通知渠道，再满足 getForegroundService 的 5 秒前台契约。
+        createChannels();
+        startForeground(1, buildServiceNotification(lastStatus.isEmpty() ? "初始化..." : lastStatus));
+        if (running && intent != null && ACTION_POLL.equals(intent.getAction())) {
+            // 闹钟唤醒: 拿短时 WakeLock 做完巡检立刻释放, CPU 其余时间休眠
+            pool.execute(() -> {
+                android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+                android.os.PowerManager.WakeLock wl = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "xc:poll");
+                try {
+                    wl.acquire(90_000);
+                    doPoll();
+                } finally {
+                    try { wl.release(); } catch (Exception ignore) { }
+                }
+            });
+            return START_STICKY;
+        }
         startPolling();
         return START_STICKY;
+    }
+
+    @Override public void onTaskRemoved(Intent rootIntent) {
+        // 小米等 ROM 划掉最近任务会杀进程并撤销旧闹钟；在回调内立即重排并拉活。
+        if (getSharedPreferences(getPackageName(), MODE_PRIVATE).getBoolean(PREF_RUNNING, false)) {
+            running = true;
+            scheduleNext(1000);
+            try {
+                startForegroundService(new Intent(this, PollService.class));
+            } catch (Exception e) {
+                appendLog("任务移除后拉活受限, 已由系统闹钟接管");
+            }
+        }
+        super.onTaskRemoved(rootIntent);
+    }
+
+    @Override public void onDestroy() {
+        // 非用户主动停止时保留一次系统级恢复点；STOP 会先把 running 置 false。
+        if (running && getSharedPreferences(getPackageName(), MODE_PRIVATE)
+                .getBoolean(PREF_RUNNING, false)) {
+            scheduleNext(1500);
+        }
+        pool.shutdownNow();
+        super.onDestroy();
     }
 
     void startPolling() {
@@ -99,12 +158,12 @@ public class PollService extends Service {
         loadArchive();
         api = buildApi();
         startForeground(1, buildServiceNotification("初始化..."));
-        handler.post(tick);
+        scheduleNext(1500);
     }
 
     void stopPolling() {
         running = false;
-        handler.removeCallbacks(tick);
+        cancelAlarm();
         getSharedPreferences(getPackageName(), MODE_PRIVATE).edit().putBoolean(PREF_RUNNING, false).apply();
     }
 
@@ -121,11 +180,20 @@ public class PollService extends Service {
 
     void doPoll() {
         if (!running) return;
+        nextOpenReminderAt = 0;
         SharedPreferences p = getSharedPreferences(getPackageName(), MODE_PRIVATE);
-        double lat = parseD(p.getString("lat", "23.065594"), 23.065594);
-        double lng = parseD(p.getString("lng", "113.977765"), 113.977765);
+        double lat = parseD(p.getString("lat", "23.020500"), 23.020500);
+        double lng = parseD(p.getString("lng", "113.751800"), 113.751800);
+        if (inQuietHours()) {
+            // 静默时段: 不发请求也不唤醒, 直接把下一次闹钟排到静默结束后
+            lastStatus = "静默时段";
+            updateServiceNotification();
+            scheduleNext(msUntilQuietEnd());
+            appendLog("静默时段, 跳过本次巡检");
+            return;
+        }
         try {
-            JSONArray list = api.fetchFeedAll(lat, lng, 4);
+            JSONArray list = api.fetchFeedAll(lat, lng);
             handleSuccess(list);
             consecutiveFails = 0;
             lastPollTs = System.currentTimeMillis();
@@ -139,11 +207,27 @@ public class PollService extends Service {
         long delay;
         if (consecutiveFails > 0) {
             long backoff = minutesMs(baseMin) * (1L << Math.min(consecutiveFails, 5));
-            delay = Math.min(backoff, minutesMs(30));
+            delay = Math.min(backoff, minutesMs(60));
         } else {
             delay = (long) (minutesMs(baseMin) * (0.75 + Math.random() * 0.5));
         }
-        handler.postDelayed(tick, delay);
+        if (nextOpenReminderAt > 0) {
+            delay = Math.min(delay, Math.max(1000L, nextOpenReminderAt - System.currentTimeMillis()));
+        }
+        scheduleNext(delay);
+    }
+
+    /** 距静默结束还有多少毫秒 (至少 60s, 避免边界抖动) */
+    long msUntilQuietEnd() {
+        try {
+            SharedPreferences p = getSharedPreferences(getPackageName(), MODE_PRIVATE);
+            SimpleDateFormat sdf = new SimpleDateFormat("HH:mm", Locale.ROOT);
+            Date now = sdf.parse(sdf.format(new Date()));
+            Date end = sdf.parse(p.getString("quiet_end", "07:30"));
+            long diff = end.getTime() - now.getTime();
+            if (diff < 60_000L) diff += 24 * 3600_000L; // 跨午夜
+            return Math.max(diff, 60_000L);
+        } catch (Exception e) { return minutesMs(5); }
     }
 
     void handleSuccess(JSONArray list) {
@@ -155,11 +239,14 @@ public class PollService extends Service {
             boolean chkKeyword = p.getBoolean("switch_keyword", true);
             String[] keywords = getKeywords();
             int minRebate = parseInt(p.getString("min_rebate_fen", "0"), 0);
+            int openLeadMin = Math.max(0, Math.min(60, parseInt(p.getString("open_lead_min", "5"), 5)));
             java.util.Set<String> plats = getPlatforms();
             long nowSec = System.currentTimeMillis() / 1000;
+            nextOpenReminderAt = 0;
 
             HashMap<Long, Boolean> seen = new HashMap<>();
-            List<String[]> batchNew = new ArrayList<>(); // {store, chip, quota}
+            java.util.LinkedHashMap<Long, JSONObject> upcomingCache = new java.util.LinkedHashMap<>();
+            List<String[]> batchNew = new ArrayList<>(); // {store, chip, quota, startText, upcoming}
             int newCount = 0;
             for (int i = 0; i < list.length(); i++) {
                 JSONObject it = list.getJSONObject(i);
@@ -167,7 +254,7 @@ public class PollService extends Service {
                 if (pid == 0) continue;
                 seen.put(pid, true);
                 ItemState st = items.get(pid);
-                boolean archived = archive.contains(pid);   // 曾出现过且已过保留期
+                boolean archived = archive.contains(pid);
                 boolean isNew = (st == null);
                 if (isNew) {
                     st = new ItemState();
@@ -175,7 +262,6 @@ public class PollService extends Service {
                     st.ls = nowSec;
                     items.put(pid, st);
                     if (!archived) newCount++;
-                    // 归档回归的活动不推「上新」, 但补货监控照常生效
                     if (archived || baseline) st.notifiedNew = true;
                 }
                 JSONObject store = it.optJSONObject("store") != null ? it.optJSONObject("store") : new JSONObject();
@@ -184,32 +270,68 @@ public class PollService extends Service {
                 int orderMoney = it.optInt("order_money", 0);
                 int quota = it.optInt("left_number", 0);
                 int platform = store.optInt("store_platform", it.optInt("store_platform", 0));
+                long startTs = startTimestampSeconds(it);
+                boolean upcoming = startTs > nowSec;
+                String startText = startTimeText(it, startTs);
+                if (st.startTs != startTs) {
+                    st.notifiedOpen = false;
+                    st.awaitingOpen = false;
+                }
+                st.startTs = startTs;
+                if (upcoming) upcomingCache.put(pid, it);
                 st.ls = nowSec;
+                if (baseline) {
+                    st.notifiedNew = true;
+                    st.notifiedOpen = true; // 首次建基线不补发历史活动的开抢提醒
+                }
 
-                if (baseline && isNew) st.notifiedNew = true;
+                boolean platOk = plats.isEmpty() || plats.contains(String.valueOf(platform));
+                boolean rebateOk = minRebate <= 0 || rebate >= minRebate;
+                boolean allEligible = chkAll && platOk && rebateOk;
+                boolean keywordHit = chkKeyword && keywords.length > 0 && hitKeyword(storeName, keywords);
+                String chip = chipText(orderMoney, rebate);
 
-                // 全部上新提醒: 尊重平台/最低返利筛选, 批量合并推送; 名额为 0 的新活动也如实计入
-                if (!baseline && isNew && chkAll && !st.notifiedNew) {
-                    boolean platOk = plats.isEmpty() || plats.contains(String.valueOf(platform));
-                    boolean rebateOk = minRebate <= 0 || rebate >= minRebate;
-                    if (platOk && rebateOk) {
+                // 活动上线提醒：未开抢也通知，但标题和正文都明确标注，不再伪装成可抢。
+                if (!baseline && isNew && !st.notifiedNew) {
+                    if (allEligible) {
                         st.notifiedNew = true;
-                        batchNew.add(new String[]{storeName, chipText(orderMoney, rebate), String.valueOf(quota)});
+                        // 上线时已经进入提前提醒窗口，则这条“未开抢”本身就是开抢预告，不重复再推。
+                        if (upcoming && nowSec >= startTs - openLeadMin * 60L) st.notifiedOpen = true;
+                        batchNew.add(new String[]{storeName, chip, String.valueOf(quota), startText, String.valueOf(upcoming)});
+                    } else if (keywordHit) {
+                        st.notifiedNew = true;
+                        if (upcoming) {
+                            notifyAlert("🕒 关键词上新未开抢 · " + chip, storeName, quota, startText + " 开抢");
+                            if (nowSec >= startTs - openLeadMin * 60L) st.notifiedOpen = true;
+                        } else if (quota > 0) {
+                            notifyAlert("🎯 关键词上新 · " + chip, storeName, quota);
+                        }
                     }
                 }
-                // 关键词提醒: 精准命中, 不受筛选限制
-                // 上新: 名额为 0 时只标记不推 (没有意义), 等补货 (0 -> 有) 时推「补货」
-                if (!baseline && chkKeyword && keywords.length > 0 && hitKeyword(storeName, keywords)) {
-                    if (isNew) {
-                        if (!st.notifiedNew && quota > 0) {
-                            st.notifiedNew = true;
-                            notifyAlert("🎯 关键词上新 · " + chipText(orderMoney, rebate), storeName, quota);
-                        } else if (!st.notifiedNew) {
-                            st.notifiedNew = true;  // 秒没的新活动: 静默标记, 静候补货
-                        }
-                    } else if (st.quota == 0 && quota > 0 && !st.notifiedRestock) {
-                        st.notifiedRestock = true;
-                        notifyAlert("🎯 关键词补货 · " + chipText(orderMoney, rebate), storeName, quota);
+                // 未开抢阶段的名额变化不误报“补货”。
+                if (!baseline && !isNew && keywordHit && !upcoming
+                        && st.quota == 0 && quota > 0 && !st.notifiedRestock) {
+                    st.notifiedRestock = true;
+                    notifyAlert("🎯 关键词补货 · " + chip, storeName, quota);
+                }
+
+                // 只对“曾确认未开抢”的活动响一次；避免每日刷新把已开抢活动重复当成开抢。
+                if (!baseline && !st.notifiedOpen && startTs > 0
+                        && (allEligible || keywordHit)) {
+                    long remindAt = startTs - openLeadMin * 60L;
+                    if (upcoming && nowSec < remindAt) {
+                        st.awaitingOpen = true;
+                        long remindMs = remindAt * 1000L;
+                        if (nextOpenReminderAt == 0 || remindMs < nextOpenReminderAt) nextOpenReminderAt = remindMs;
+                    } else if (upcoming) {
+                        st.awaitingOpen = true;
+                        notifyAlert("⏰ 即将开抢 · " + chip, storeName, quota, startText + " 开抢");
+                        st.notifiedOpen = true;
+                        st.awaitingOpen = false;
+                    } else if (st.awaitingOpen) {
+                        notifyAlert("🔔 开抢啦 · " + chip, storeName, quota, startText + " 已开始");
+                        st.notifiedOpen = true;
+                        st.awaitingOpen = false;
                     }
                 }
                 st.store = storeName;
@@ -219,23 +341,26 @@ public class PollService extends Service {
                 if (quota == 0) st.notifiedRestock = false;
             }
 
-            // 批量通知: 3 条以内逐条, 超过合并成一条汇总 (解决「一到刷新时间推一堆」)
             if (!batchNew.isEmpty()) {
                 if (batchNew.size() <= 3) {
                     for (String[] b : batchNew) {
-                        notifyAlert("🆕 上新 · " + b[1], b[0], Integer.parseInt(b[2]));
+                        boolean upcoming = Boolean.parseBoolean(b[4]);
+                        String title = (upcoming ? "🕒 上新未开抢 · " : "🆕 上新 · ") + b[1];
+                        notifyAlert(title, b[0], Integer.parseInt(b[2]), upcoming ? b[3] + " 开抢" : "");
                     }
                 } else {
                     StringBuilder sb = new StringBuilder();
                     for (int i = 0; i < batchNew.size() && i < 3; i++) {
-                        sb.append(batchNew.get(i)[0]).append(" ").append(batchNew.get(i)[1]).append("\n");
+                        String[] b = batchNew.get(i);
+                        sb.append(b[0]).append(" ").append(b[1]);
+                        if (Boolean.parseBoolean(b[4])) sb.append("（未开抢 ").append(b[3]).append("）");
+                        sb.append("\n");
                     }
                     sb.append("… 共 ").append(batchNew.size()).append(" 个新活动");
                     notifySystem("🆕 发现 " + batchNew.size() + " 个新活动", sb.toString().trim());
                 }
             }
 
-            // 保留期: 48 小时内出现过的活动不删除 (防止列表抖动导致重复推送), 过期才清理
             Iterator<Long> it = items.keySet().iterator();
             int pruned = 0;
             while (it.hasNext()) {
@@ -244,7 +369,7 @@ public class PollService extends Service {
                 if (!seen.containsKey(k) && nowSec - st.ls > 48 * 3600) {
                     it.remove();
                     pruned++;
-                    archive.add(k);   // 进入已见归档, 再出现不重复推上新
+                    archive.add(k);
                 }
             }
             while (archive.size() > 8000) {
@@ -252,6 +377,7 @@ public class PollService extends Service {
                 if (ai.hasNext()) { ai.next(); ai.remove(); } else break;
             }
             saveArchive();
+            saveUpcoming(upcomingCache.values());
 
             hadPriorState = true;
             saveState();
@@ -260,6 +386,39 @@ public class PollService extends Service {
         } catch (Exception e) {
             handleFailure("解析: " + e.getMessage());
         }
+    }
+
+    static long startTimestampSeconds(JSONObject it) {
+        long ts = it.optLong("start_timestamp", 0);
+        if (ts > 10_000_000_000L) ts /= 1000L; // 兼容毫秒时间戳
+        String hour = it.optString("start_time_hour", "").trim();
+        try {
+            // 官方详情页以 start_time_hour 判断时分；日期仍取绝对时间戳，正确处理跨天活动。
+            if (!hour.matches("\\d{1,2}:\\d{2}")) return ts > 0 ? ts : 0;
+            String date;
+            if (ts > 0) {
+                date = new SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(new Date(ts * 1000L));
+            } else {
+                date = it.optString("start_date", "").trim();
+                if (date.length() > 10) date = date.substring(0, 10);
+                if (date.isEmpty()) date = new SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(new Date());
+            }
+            Date d = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).parse(date + " " + hour);
+            return d == null ? (ts > 0 ? ts : 0) : d.getTime() / 1000L;
+        } catch (Exception e) {
+            return ts > 0 ? ts : 0;
+        }
+    }
+
+    static String startTimeText(JSONObject it, long startTs) {
+        String hour = it.optString("start_time_hour", "").trim();
+        if (!hour.isEmpty()) return hour;
+        return startTs > 0 ? new SimpleDateFormat("MM-dd HH:mm", Locale.ROOT).format(new Date(startTs * 1000L)) : "时间待定";
+    }
+
+    static boolean isNotStarted(JSONObject it) {
+        long startTs = startTimestampSeconds(it);
+        return startTs > System.currentTimeMillis() / 1000;
     }
 
     java.util.Set<String> getPlatforms() {
@@ -295,6 +454,52 @@ public class PollService extends Service {
             fo.write(a.toString().getBytes("UTF-8"));
             fo.close();
         } catch (Exception ignore) { }
+    }
+
+    File upcomingFile() { return new File(getFilesDir(), "upcoming.json"); }
+
+    void saveUpcoming(java.util.Collection<JSONObject> values) {
+        try {
+            JSONArray a = new JSONArray();
+            int n = 0;
+            for (JSONObject it : values) {
+                if (n++ >= 200) break;
+                a.put(it);
+            }
+            File tmp = new File(upcomingFile().getAbsolutePath() + ".tmp");
+            FileOutputStream fo = new FileOutputStream(tmp);
+            fo.write(a.toString().getBytes("UTF-8"));
+            fo.close();
+            if (!tmp.renameTo(upcomingFile())) {
+                upcomingFile().delete();
+                if (!tmp.renameTo(upcomingFile())) {
+                    FileOutputStream direct = new FileOutputStream(upcomingFile());
+                    direct.write(a.toString().getBytes("UTF-8"));
+                    direct.close();
+                }
+            }
+        } catch (Exception ignore) { }
+    }
+
+    /** 首页读取巡检缓存；只返回仍未开抢的活动，过期数据自动忽略。 */
+    static JSONArray readUpcoming(File filesDir) {
+        try {
+            File f = new File(filesDir, "upcoming.json");
+            if (!f.exists()) return new JSONArray();
+            FileInputStream fi = new FileInputStream(f);
+            byte[] all = new byte[(int) f.length()];
+            int n = fi.read(all);
+            fi.close();
+            JSONArray src = new JSONArray(new String(all, 0, Math.max(n, 0), "UTF-8"));
+            JSONArray out = new JSONArray();
+            for (int i = 0; i < src.length(); i++) {
+                JSONObject it = src.optJSONObject(i);
+                if (it != null && isNotStarted(it)) out.put(it);
+            }
+            return out;
+        } catch (Exception e) {
+            return new JSONArray();
+        }
     }
 
     void appendLog(String line) {
@@ -360,9 +565,8 @@ public class PollService extends Service {
         lastStatus = "失败x" + consecutiveFails + " (" + why + ")";
         appendLog("失败 " + why);
         if (consecutiveFails == 10) {
-            notifySystem("⏸ 监控已自动暂停", "连续失败: " + why + "\n请打开小蚕哨兵检查网络后重新启动");
-            stopPolling();
-            stopSelf();
+            // 不再自动停止服务 (v1.2 熔断会让监听静默死掉): 通知用户后放慢节奏继续尝试, 网络恢复自动回归
+            notifySystem("⚠ 监控连续失败, 已放慢巡检", "原因: " + why + "\n会继续每 60 分钟尝试, 恢复后自动回到正常频率");
         }
     }
 
@@ -402,8 +606,7 @@ public class PollService extends Service {
 
     void loadState() {
         try {
-            hadPriorState = stateFile().exists();
-            if (!hadPriorState) { stateLoaded = true; return; }
+            if (!stateFile().exists()) { stateLoaded = true; return; }
             FileInputStream fin = new FileInputStream(stateFile());
             byte[] buf = new byte[(int) stateFile().length()];
             int n = fin.read(buf);
@@ -423,15 +626,37 @@ public class PollService extends Service {
                 if (st.ls == 0) st.ls = System.currentTimeMillis() / 1000;
                 st.notifiedNew = v.optBoolean("nn", false);
                 st.notifiedRestock = v.optBoolean("nr", false);
+                st.startTs = v.optLong("st", 0);
+                st.notifiedOpen = v.optBoolean("no", false);
+                st.awaitingOpen = v.optBoolean("ao", false);
                 items.put(Long.parseLong(k), st);
             }
-        } catch (Exception ignore) { }
+            // 只有成功解析且确实有历史, 才视为「有基线」; 文件损坏/为空 -> 回退首巡静默
+            hadPriorState = !items.isEmpty();
+        } catch (Exception ignore) {
+            items.clear();
+            hadPriorState = false;
+        }
         stateLoaded = true;
     }
 
     void ensureStateLoaded() { if (!stateLoaded) loadState(); }
 
     void saveState() {
+        // 原子写: 先写临时文件再改名, 进程被杀也不会留半个坏 JSON
+        try {
+            java.io.File tmp = new java.io.File(stateFile().getAbsolutePath() + ".tmp");
+            writeStateTo(tmp);
+            if (!tmp.renameTo(stateFile())) {
+                stateFile().delete();
+                writeStateTo(stateFile());
+            }
+            return;
+        } catch (Exception ignore) { }
+        writeStateTo(stateFile());
+    }
+
+    void writeStateTo(java.io.File f) {
         try {
             JSONObject o = new JSONObject();
             for (Map.Entry<Long, ItemState> e : items.entrySet()) {
@@ -445,9 +670,12 @@ public class PollService extends Service {
                 v.put("ls", st.ls);
                 v.put("nn", st.notifiedNew);
                 v.put("nr", st.notifiedRestock);
+                v.put("st", st.startTs);
+                v.put("no", st.notifiedOpen);
+                v.put("ao", st.awaitingOpen);
                 o.put(String.valueOf(e.getKey()), v);
             }
-            FileOutputStream fo = new FileOutputStream(stateFile());
+            FileOutputStream fo = new FileOutputStream(f);
             fo.write(o.toString().getBytes("UTF-8"));
             fo.close();
         } catch (Exception ignore) { }
@@ -462,7 +690,12 @@ public class PollService extends Service {
     }
 
     void notifyAlert(String title, String storeName, int quota) {
-        String text = storeName + (quota > 0 ? " · 还剩" + quota + "份" : " · 已抢光");
+        notifyAlert(title, storeName, quota, "");
+    }
+
+    void notifyAlert(String title, String storeName, int quota, String extra) {
+        String text = storeName + (extra == null || extra.isEmpty() ? "" : " · " + extra)
+                + (quota > 0 ? " · 还剩" + quota + "份" : " · 暂无名额");
         Notification.Builder b = new Notification.Builder(this, CH_ALERT)
                 .setSmallIcon(R.drawable.ic_app)
                 .setContentTitle(title)
@@ -487,8 +720,9 @@ public class PollService extends Service {
     }
 
     void updateServiceNotification() {
-        NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        nm.notify(1, buildServiceNotification(lastStatus));
+        Notification n = buildServiceNotification(lastStatus);
+        startForeground(1, n);                          // 官方更新方式
+        ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(1, n); // MIUI 兜底
     }
 
     Notification buildServiceNotification(String status) {
