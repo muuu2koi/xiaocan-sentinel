@@ -74,8 +74,7 @@ public class PollService extends Service {
         android.app.AlarmManager am = (android.app.AlarmManager) getSystemService(ALARM_SERVICE);
         if (am == null) return;
         Intent i = new Intent(this, PollService.class).setAction(ACTION_POLL);
-        // getForegroundService: 进程被划掉后, 闹钟也能从后台合法拉起前台服务 (getService 在 Android 8+ 后台会被拒)
-        pollPi = android.app.PendingIntent.getForegroundService(this, 1, i,
+        pollPi = android.app.PendingIntent.getService(this, 1, i,
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
         am.setWindow(android.app.AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + delayMs,
                 5 * 60_000L, pollPi);
@@ -96,8 +95,6 @@ public class PollService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
-        // getForegroundService 唤醒要求 5 秒内进前台: 无论哪条路径, 第一时间 startForeground
-        startForeground(1, buildServiceNotification(lastStatus.isEmpty() ? "初始化..." : lastStatus));
         if (running && intent != null && ACTION_POLL.equals(intent.getAction())) {
             // 闹钟唤醒: 拿短时 WakeLock 做完巡检立刻释放, CPU 其余时间休眠
             pool.execute(() -> {
@@ -173,7 +170,7 @@ public class PollService extends Service {
         long delay;
         if (consecutiveFails > 0) {
             long backoff = minutesMs(baseMin) * (1L << Math.min(consecutiveFails, 5));
-            delay = Math.min(backoff, minutesMs(60));
+            delay = Math.min(backoff, minutesMs(30));
         } else {
             delay = (long) (minutesMs(baseMin) * (0.75 + Math.random() * 0.5));
         }
@@ -407,8 +404,9 @@ public class PollService extends Service {
         lastStatus = "失败x" + consecutiveFails + " (" + why + ")";
         appendLog("失败 " + why);
         if (consecutiveFails == 10) {
-            // 不再自动停止服务 (v1.2 熔断会让监听静默死掉): 通知用户后放慢节奏继续尝试, 网络恢复自动回归
-            notifySystem("⚠ 监控连续失败, 已放慢巡检", "原因: " + why + "\n会继续每 60 分钟尝试, 恢复后自动回到正常频率");
+            notifySystem("⏸ 监控已自动暂停", "连续失败: " + why + "\n请打开小蚕哨兵检查网络后重新启动");
+            stopPolling();
+            stopSelf();
         }
     }
 
@@ -448,7 +446,8 @@ public class PollService extends Service {
 
     void loadState() {
         try {
-            if (!stateFile().exists()) { stateLoaded = true; return; }
+            hadPriorState = stateFile().exists();
+            if (!hadPriorState) { stateLoaded = true; return; }
             FileInputStream fin = new FileInputStream(stateFile());
             byte[] buf = new byte[(int) stateFile().length()];
             int n = fin.read(buf);
@@ -470,32 +469,13 @@ public class PollService extends Service {
                 st.notifiedRestock = v.optBoolean("nr", false);
                 items.put(Long.parseLong(k), st);
             }
-            // 只有成功解析且确实有历史, 才视为「有基线」; 文件损坏/为空 -> 回退首巡静默
-            hadPriorState = !items.isEmpty();
-        } catch (Exception ignore) {
-            items.clear();
-            hadPriorState = false;
-        }
+        } catch (Exception ignore) { }
         stateLoaded = true;
     }
 
     void ensureStateLoaded() { if (!stateLoaded) loadState(); }
 
     void saveState() {
-        // 原子写: 先写临时文件再改名, 进程被杀也不会留半个坏 JSON
-        try {
-            java.io.File tmp = new java.io.File(stateFile().getAbsolutePath() + ".tmp");
-            writeStateTo(tmp);
-            if (!tmp.renameTo(stateFile())) {
-                stateFile().delete();
-                writeStateTo(stateFile());
-            }
-            return;
-        } catch (Exception ignore) { }
-        writeStateTo(stateFile());
-    }
-
-    void writeStateTo(java.io.File f) {
         try {
             JSONObject o = new JSONObject();
             for (Map.Entry<Long, ItemState> e : items.entrySet()) {
@@ -511,7 +491,7 @@ public class PollService extends Service {
                 v.put("nr", st.notifiedRestock);
                 o.put(String.valueOf(e.getKey()), v);
             }
-            FileOutputStream fo = new FileOutputStream(f);
+            FileOutputStream fo = new FileOutputStream(stateFile());
             fo.write(o.toString().getBytes("UTF-8"));
             fo.close();
         } catch (Exception ignore) { }
@@ -551,9 +531,8 @@ public class PollService extends Service {
     }
 
     void updateServiceNotification() {
-        Notification n = buildServiceNotification(lastStatus);
-        startForeground(1, n);                          // 官方更新方式
-        ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(1, n); // MIUI 兜底
+        NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        nm.notify(1, buildServiceNotification(lastStatus));
     }
 
     Notification buildServiceNotification(String status) {

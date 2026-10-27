@@ -127,11 +127,6 @@ public class HomeActivity extends Activity {
     protected void onResume() {
         super.onResume();
         boolean running = p.getBoolean(PollService.PREF_RUNNING, false);
-        if (running) {
-            // 自愈: 标记为运行中但服务可能已被系统/安装更新杀掉, 打开 App 必定拉活
-            Intent keep = new Intent(this, PollService.class);
-            if (Build.VERSION.SDK_INT >= 26) startForegroundService(keep); else startService(keep);
-        }
         tvStatus.setText(running ? "监听中" : "已停止");
         tvStatus.setBackgroundResource(running ? R.drawable.bg_chip_green : R.drawable.bg_search);
         tvStatus.setTextColor(running ? 0xFF2BB673 : 0xFF9A9A9A);
@@ -161,12 +156,6 @@ public class HomeActivity extends Activity {
             if (lat != 0 && lng != 0) {
                 p.edit().putString("lat", String.valueOf(lat)).putString("lng", String.valueOf(lng)).apply();
                 main.post(() -> tvLoc.setText("📍 " + String.format("%.4f, %.4f · %s", lat, lng, src)));
-                // 反查市级地址, 成功后替换坐标显示
-                CityResolver.city(this, lat, lng, city -> {
-                    if (city != null && !city.isEmpty()) {
-                        tvLoc.setText("📍 " + city + " · " + src);
-                    }
-                });
                 fetchWith(lat, lng);
             } else {
                 main.post(() -> tvLoc.setText("📍 定位失败, 使用默认位置"));
